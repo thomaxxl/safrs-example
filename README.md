@@ -13,6 +13,16 @@ Launch a psql shell - manually or with `./run.sh db_shell`.
 * `\c safrs`
 * `CREATE EXTENSION "uuid-ossp";`
 
+## Swagger Configuration
+
+edit [config/base.py](config/base.py) 
+
+```python
+SWAGGER_HOST = '172.16.17.172'
+SWAGGER_PORT = 1237
+```
+
+
 ## Run the service
 `./run.sh up`
 
