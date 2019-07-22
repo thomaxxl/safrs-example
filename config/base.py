@@ -8,7 +8,9 @@ SQLALCHEMY_DATABASE_URI = f'postgresql://{DB_USER}:{DB_PWD}@{DB_HOST}/{DB_NAME}'
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 
 # feels dirty to hard code
-SWAGGER_HOST = 'localhost:1237'
+#SWAGGER_HOST = 'localhost:1237'
+SWAGGER_HOST = '172.16.17.172'
+SWAGGER_PORT = 1237
 
 
 LOGGING = {

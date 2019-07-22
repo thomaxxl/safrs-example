@@ -8,8 +8,8 @@ from app.models import db, Thing, SubThing
 migrate = Migrate()
 
 
-def create_api(app, swagger_host=None):
-    api = SAFRSAPI(app, host=swagger_host)
+def create_api(app, swagger_host=None, swagger_port=5000):
+    api = SAFRSAPI(app, host=swagger_host, port=swagger_port)
     api.expose_object(Thing)
     api.expose_object(SubThing)
 
@@ -27,5 +27,5 @@ def create_app():
 def run_app():
     app = create_app()
     with app.app_context():
-        create_api(app, app.config["SWAGGER_HOST"])
+        create_api(app, app.config["SWAGGER_HOST"], app.config["SWAGGER_PORT"])
     return app
