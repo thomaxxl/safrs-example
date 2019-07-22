@@ -1,3 +1,7 @@
+## Overview
+
+Docker image with tests and examples, created by @wicol
+
 ## Test/example repo for SAFRS
 
 Use `./run.sh` to run misc tasks for this repo. Just `cat run.sh` to see what's available,
