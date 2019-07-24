@@ -37,7 +37,6 @@ def test_create_thing(client):
     res = client.get(f"/thing/")
     assert res.status_code == 200
     result = res.get_json()
-    print(result)
     
     # Get collection with filter
     res = client.get(f"/thing/?filter[name]={new_name}")
@@ -89,3 +88,10 @@ def test_subthing_include_parent(client):
     assert response_data["data"]["id"] == subthing.id
     assert response_data["data"]["attributes"]["name"] == subthing.name
     assert response_data["included"][0]["id"] == subthing.thing.id
+
+
+def test_get_swagger(client):
+    res = client.get(f"/swagger.json")
+    assert res.status_code == 200
+    response_data = res.get_json()
+
