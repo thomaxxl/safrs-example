@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 
 # Migrate database
+flask db migrate
 flask db upgrade
 
 if [ $FLASK_ENV = "development" ]; then

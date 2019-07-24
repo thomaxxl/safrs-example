@@ -1,11 +1,12 @@
 from tests.factories import ThingFactory, SubThingFactory
 from jsonschema import validate
 import json
+import datetime
 
 def test_create_thing(client):
     name =  "created_name"
     desc = "created_description"
-    data = {"attributes" : {"name" : name, "description" : desc},
+    data = {"attributes" : {"name" : name, "description" : desc, "created" : str(datetime.datetime.now())},
             "type" : "thing"}
     res = client.post("/thing/", json={"data" : data})
     assert res.status_code == 201
@@ -23,6 +24,7 @@ def test_create_thing(client):
     patch_data = data.copy()
     new_name = "new name"
     patch_data["attributes"]["name"] = new_name
+    patch_data["attributes"]["description"] = None
     patch_data["id"] = thing_id
     res = client.patch(f"/thing/{thing_id}", json={"data" : patch_data})
     assert res.status_code == 201
@@ -34,7 +36,7 @@ def test_create_thing(client):
     assert res.status_code == 200
     result = res.get_json()
     assert result["data"]["attributes"]["name"] == new_name
-    assert result["data"]["attributes"]["description"] == desc
+    assert not result["data"]["attributes"]["description"] 
 
     res = client.get(f"/thing/")
     assert res.status_code == 200
@@ -98,6 +100,12 @@ def test_relationship(client):
     response_data = res.get_json()
     assert response_data["data"]["id"] == subthing.thing.id
     assert response_data["data"]["attributes"]["name"] == subthing.thing.name
+
+    res = client.delete(f"/subthing/{subthing.id}/thing/{subthing.thing.id}")
+    assert res.status_code == 200
+    print('x'*100)
+    res = client.get(f"/subthing/{subthing.id}/thing")
+    print(res.get_json())
 
 
 def test_validate_swagger(client):

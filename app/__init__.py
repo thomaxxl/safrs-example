@@ -1,17 +1,44 @@
 import logging.config
-
+import hashlib
 from flask import Flask
 from safrs import SAFRSAPI
 from flask_migrate import Migrate
-from app.models import db, Thing, SubThing
+from app.models import db, Thing, SubThing, Person, Book, Review, Publisher
+#from app.models import db, Thing, SubThing
 
 migrate = Migrate()
 
 
 def create_api(app, swagger_host=None, swagger_port=5000):
-    api = SAFRSAPI(app, host=swagger_host, port=swagger_port)
+    custom_swagger = {
+            "info": {"title": "New Title"},
+            "securityDefinitions": {"ApiKeyAuth": {"type": "apiKey" , "in" : "header", "name": "My-ApiKey"}}
+        }  # Customized swagger will be merged
+    api = SAFRSAPI(app, host=swagger_host, port=swagger_port, custom_swagger=custom_swagger)
     api.expose_object(Thing)
     api.expose_object(SubThing)
+
+
+    for i in range(300):
+        secret = hashlib.sha256(bytes(i)).hexdigest()
+        reader = Person(name="Reader " + str(i), email="reader_email" + str(i), password=secret)
+        author = Person(name="Author " + str(i), email="author_email" + str(i))
+        book = Book(title="book_title" + str(i))
+        review = Review(
+            reader_id=reader.id, book_id=book.id, review="review " + str(i)
+        )
+        publisher = Publisher(name="name" + str(i))
+        publisher.books.append(book)
+        reader.books_read.append(book)
+        author.books_written.append(book)
+        for obj in [reader, author, book, publisher, review]:
+            db.session.add(obj)
+
+        db.session.commit()
+
+    for model in [Person, Book, Review, Publisher]:
+        # Create an API endpoint
+        api.expose_object(model)
 
 
 def create_app():
