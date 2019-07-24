@@ -11,7 +11,7 @@ services:
       DB_NAME: safrs
       DB_USER: postgres
       DB_PWD: postgres
-      PYTHONPATH: "${PYTHONPATH}:safrs"
+      PYTHONPATH: "${PYTHONPATH}:/app/safrs"
     ports:
       - 1237:80
     volumes:

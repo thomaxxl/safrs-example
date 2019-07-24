@@ -1,4 +1,5 @@
 from safrs import jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response
+from safrs.api_methods import startswith
 from sqlalchemy import func
 
 from app.base_model import db, BaseModel
@@ -45,6 +46,8 @@ class Thing(BaseModel):
         """
         content = "Hello {}, here is your thing: {}\n".format(email, email)
         return {"result": "sent: {}".format(content)}
+
+    startswith = startswith
 
 
 class SubThing(BaseModel):
