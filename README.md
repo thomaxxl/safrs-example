@@ -1,6 +1,6 @@
 ## Overview
 
-Docker image with tests and examples, created by @wicol
+Docker image with tests and examples, created by [wicol](https://github.com/wicol)
 
 ## Test/example repo for SAFRS
 

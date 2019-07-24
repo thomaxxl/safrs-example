@@ -1,4 +1,6 @@
 from tests.factories import ThingFactory, SubThingFactory
+from jsonschema import validate
+import json
 
 def test_create_thing(client):
     name =  "created_name"
@@ -81,7 +83,6 @@ def test_thing_get_by_name(client):
 
 def test_subthing_include_parent(client):
     subthing = SubThingFactory(name="subsomething")
-
     res = client.get(f"/subthing/{subthing.id}?include=thing")
     assert res.status_code == 200
     response_data = res.get_json()
@@ -90,8 +91,17 @@ def test_subthing_include_parent(client):
     assert response_data["included"][0]["id"] == subthing.thing.id
 
 
-def test_get_swagger(client):
-    res = client.get(f"/swagger.json")
+def test_relationship(client):
+    subthing = SubThingFactory(name="subsomething")
+    res = client.get(f"/subthing/{subthing.id}/thing")
     assert res.status_code == 200
     response_data = res.get_json()
+    assert response_data["data"]["id"] == subthing.thing.id
+    assert response_data["data"]["attributes"]["name"] == subthing.thing.name
+
+
+def test_validate_swagger(client):
+    res = client.get(f"/swagger.json")
+    assert res.status_code == 200
+    swagger_ = res.get_json()
 
