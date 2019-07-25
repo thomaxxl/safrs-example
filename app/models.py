@@ -1,4 +1,4 @@
-from safrs import jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response
+from safrs import jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response, paginate
 from safrs.api_methods import startswith
 from sqlalchemy import func
 from app.base_model import db, BaseModel
@@ -134,17 +134,16 @@ class Person(BaseModel):
         """
         print(args)
         print(kwargs)
-        result = cls
         response = SAFRSFormattedResponse()
         try:
-            instances = result.query
+            instances = cls.query
             links, instances, count = paginate(instances)
             data = [item for item in instances]
-            meta = {}
+            meta = {"args" : args, "kwargs" : kwargs}
             errors = None
             response.response = jsonapi_format_response(data, meta, links, errors, count)
         except Exception as exc:
-            log.exception(exc)
+            safrs.log.exception(exc)
 
         return response
 

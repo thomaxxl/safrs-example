@@ -177,6 +177,7 @@ def test_reader(client):
     response_data = res.get_json()
     assert res.status_code == 200
     assert response_data["data"]["attributes"] == data["attributes"]
+    assert response_data["data"]["id"] == reader_id
     
     q_params = {"page[limit]" : 10, "include":"publisher", "sort":"-publisher_id"}
     res = client.get('/Books',query_string=q_params)
@@ -218,10 +219,31 @@ def test_reader(client):
     
     books_read = response_data["data"]
     books_read_ids = [ book["id"] for book in books_read ]
-    #assert book_id in books_read_ids
-    print(books_read_ids)
-    for book_id in book_ids:
-        assert book_id in books_read_ids
+    assert book_id not in books_read_ids
+    for book_read_id in book_ids:
+        assert book_read_id in books_read_ids
 
+    res = client.post(f'/People/{reader_id}/books_read',json = {"data" : "invalid"})
+    assert res.status_code == 400
 
+    res = client.post(f'/People/{reader_id}/books_read',json = {"data" : [{ "id" : book_id }]})
+    assert res.status_code == 200
+    response_data = res.get_json()
+    books_read = response_data["data"]
+    books_read_ids = [ book["id"] for book in books_read ]
+    assert book_id in books_read_ids
+    for book_read_id in book_ids:
+        assert book_read_id in books_read_id
 
+def test_rpc(client):
+    rpc_args = { "param" : "value" }
+    res = client.get('/People/my_rpc', query_string=rpc_args)
+    assert res.status_code == 200
+    response_data = res.get_json()
+    assert response_data["data"][0] is not None
+    assert response_data["meta"]["kwargs"] == rpc_args
+    res = client.post('/People/my_rpc', json={"meta" : { "args" : rpc_args }})
+    assert res.status_code == 200
+    response_data = res.get_json()
+    assert response_data["data"][0] is not None
+    assert response_data["meta"]["kwargs"] == rpc_args
