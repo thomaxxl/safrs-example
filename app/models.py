@@ -52,6 +52,10 @@ class Thing(BaseModel):
 
     startswith = startswith
 
+    @classmethod
+    def filter(cls, *args, **kwargs):
+        return cls.query.all()
+
 
 class SubThing(BaseModel):
     __tablename__ = "subthing"

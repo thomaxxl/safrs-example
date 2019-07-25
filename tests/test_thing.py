@@ -69,7 +69,7 @@ def test_create_thing(client):
 
  
     res = client.delete(f"/thing/{thing_id}")
-    assert res.status_code == 200
+    assert res.status_code == 204
     
     res = client.get(f"/thing/{thing_id}")
     assert res.status_code == 404
@@ -169,7 +169,7 @@ def test_reader(client):
     res = client.patch(f'/People/{reader_id}',json={"data" : data})
     assert res.status_code == 201
 
-    data['id'] = 'invalid id'
+    data['id'] = 'my invalid id'
     res = client.patch(f'/People/{reader_id}',json={"data" : data})
     assert res.status_code == 400
 
@@ -218,23 +218,31 @@ def test_reader(client):
     response_data = res.get_json()
     
     books_read = response_data["data"]
-    books_read_ids = [ book["id"] for book in books_read ]
-    assert book_id not in books_read_ids
+    books_read_ids = [book["id"] for book in books_read]
+    assert book_id not in books_read_ids # patch => Not in
     for book_read_id in book_ids:
         assert book_read_id in books_read_ids
 
-    res = client.post(f'/People/{reader_id}/books_read',json = {"data" : "invalid"})
-    assert res.status_code == 400
-
-    res = client.post(f'/People/{reader_id}/books_read',json = {"data" : [{ "id" : book_id }]})
+    res = client.post(f'/People/{reader_id}/books_read',json = {"data" : [{ "id" : book_id}]})
     assert res.status_code == 200
     response_data = res.get_json()
     books_read = response_data["data"]
-    books_read_ids = [ book["id"] for book in books_read ]
-    assert book_id in books_read_ids
+    books_read_ids = [book["id"] for book in books_read]
+    assert book_id in books_read_ids # post => in
     for book_read_id in book_ids:
-        assert book_read_id in books_read_id
+        assert book_read_id in books_read_ids
 
+    res = client.get(f'/People/{reader_id}/books_read/{book_id}')
+    assert res.status_code == 200
+    response_data = res.get_json()
+    assert response_data["data"]["id"] == book_id
+
+    res = client.delete(f'/People/{reader_id}/books_read/{book_id}')
+    assert res.status_code == 204
+
+    res = client.post(f'/People/{reader_id}/books_read',json = {"data" : "invalid"})
+    assert res.status_code == 400
+    
 def test_rpc(client):
     rpc_args = { "param" : "value" }
     res = client.get('/People/my_rpc', query_string=rpc_args)
@@ -247,3 +255,17 @@ def test_rpc(client):
     response_data = res.get_json()
     assert response_data["data"][0] is not None
     assert response_data["meta"]["kwargs"] == rpc_args
+
+
+
+def test_filter(client):
+    
+    res = client.get(f"/People/?filter=xx")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    assert response_data["data"][0] is not None
+
+    res = client.get(f"/thing/?filter=xx")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    
