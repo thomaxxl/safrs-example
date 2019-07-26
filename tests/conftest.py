@@ -1,4 +1,5 @@
 import pytest
+import sys
 
 from app import create_app, create_api
 from app.base_model import db
