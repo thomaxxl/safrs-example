@@ -19,7 +19,7 @@ def create_api(app, swagger_host=None, swagger_port=5000):
     api.expose_object(SubThing)
 
 
-    for i in range(300):
+    for i in range(30):
         secret = hashlib.sha256(bytes(i)).hexdigest()
         reader = Person(name="Reader " + str(i), email="reader_email" + str(i), password=secret)
         author = Person(name="Author " + str(i), email="author_email" + str(i))
@@ -27,7 +27,8 @@ def create_api(app, swagger_host=None, swagger_port=5000):
         review = Review(
             reader_id=reader.id, book_id=book.id, review="review " + str(i)
         )
-        publisher = Publisher(name="name" + str(i))
+        if i % 4 == 0:
+            publisher = Publisher(name="name" + str(i))
         publisher.books.append(book)
         reader.books_read.append(book)
         author.books_written.append(book)
