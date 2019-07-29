@@ -1,5 +1,9 @@
 import logging.config
 import hashlib
+import sys
+print(sys.path)
+
+import flask
 from flask import Flask
 from safrs import SAFRSAPI
 from flask_migrate import Migrate

@@ -3,10 +3,6 @@ from jsonschema import validate
 import json
 import datetime
 
-def test_invalid_jsonapirpc(client):
-    thing = ThingFactory(name="something", description="nothing")
-    res = client.get("/thing/get_by_name")
-    assert res.status_code == 500
 
 def test_thing_get_fields(client):
     """
@@ -25,6 +21,34 @@ def test_validate_swagger(client):
     res = client.get(f"/swagger.json")
     assert res.status_code == 200
     swagger_ = res.get_json()
+
+
+def test_delete(client):
+    res = client.get('/People')
+    assert res.status_code == 200
+    response_data = res.get_json()
+    reader_id = response_data["data"][0]["id"]
+
+    res = client.get(f'/People/{reader_id}/books_read/')
+    assert res.status_code == 200
+    response_data = res.get_json()
+    book_id = response_data["data"][0]["id"]
+    book_del_pl = response_data["data"]
+
+    res = client.delete(f'/People/{reader_id}/books_read/', json = {"data" : [{ "id" : book_id}]})
+    assert res.status_code == 403
+
+    print('----')
+    print(book_id)
+
+    res = client.delete(f'/People/{reader_id}/books_read/', json = {"data" : [{ "id" : book_id, "type" : "Books" }]})
+    assert res.status_code == 204
+
+    res = client.get(f'/People/{reader_id}/books_read/')
+    assert res.status_code == 200
+    response_data = res.get_json()
+    assert not response_data["data"]
+        
 
 def test_reader(client):
     reader_name = 'Test Reader'
@@ -131,25 +155,13 @@ def test_reader(client):
     response_data = res.get_json()
     assert response_data["data"]["id"] == book_id
 
-    res = client.delete(f'/People/{reader_id}/books_read/{book_id}')
-    assert res.status_code == 204
+    print(book_id)
 
-    res = client.post(f'/People/{reader_id}/books_read',json = {"data" : "invalid"})
-    assert res.status_code == 400
-    
-def test_rpc(client):
-    rpc_args = { "param" : "value" }
-    res = client.get('/People/my_rpc', query_string=rpc_args)
+    res = client.get(f'/People/{reader_id}/books_read/')
     assert res.status_code == 200
     response_data = res.get_json()
-    assert response_data["data"][0] is not None
-    assert response_data["meta"]["kwargs"] == rpc_args
-    res = client.post('/People/my_rpc', json={"meta" : { "args" : rpc_args }})
-    assert res.status_code == 200
-    response_data = res.get_json()
-    assert response_data["data"][0] is not None
-    assert response_data["meta"]["kwargs"] == rpc_args
-
+    book_id = response_data["data"][0]["id"]
+    book_del_pl = response_data["data"]
 
 
 def test_filter(client):

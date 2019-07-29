@@ -12,6 +12,8 @@ services:
       DB_USER: postgres
       DB_PWD: postgres
       PYTHONPATH: "${PYTHONPATH}:/app/safrs:/app/src/safrs"
+      SWAGGER_HOST: 192.168.235.130
+      SWAGGER_PORT: 1237
     ports:
       - 1237:80
     volumes:

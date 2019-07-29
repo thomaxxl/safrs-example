@@ -9,7 +9,7 @@ SQLALCHEMY_TRACK_MODIFICATIONS = False
 
 # feels dirty to hard code
 SWAGGER_HOST = os.getenv('SWAGGER_HOST','192.168.235.130')
-SWAGGER_PORT = 1237
+SWAGGER_PORT = int(os.getenv('SWAGGER_PORT',1237))
 
 
 LOGGING = {
