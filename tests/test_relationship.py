@@ -1,27 +1,30 @@
-from tests.factories import ThingFactory, SubThingFactory
-from jsonschema import validate
-import json
-import datetime
+from app import models
 
-def test_toone_relationship(client):
-    subthing = SubThingFactory(name="subsomething")
-    res = client.get(f"/subthing/{subthing.id}/thing")
+
+def test_get_parent_thing_of_subthing(client, mock_subthing):
+    res = client.get(f"/subthing/{mock_subthing.id}/thing")
     assert res.status_code == 200
+
     response_data = res.get_json()
-    assert response_data["data"]["id"] == subthing.thing.id
-    assert response_data["data"]["attributes"]["name"] == subthing.thing.name
-    subthing_thing_id = subthing.thing.id
-    
-    res = client.patch(f"/subthing/{subthing.id}/thing/", json={"data" : { "id" : subthing_thing_id,  "type" : "Thing" }} )
+    assert response_data["data"]["id"] == mock_subthing.thing.id
+    assert response_data["data"]["attributes"]["name"] == mock_subthing.thing.name
+
+
+def test_patch_parent_thing_of_subthing(client, db_session, mock_subthing, mock_thing):
+    subthing_parent_thing = db_session.query(models.SubThing).filter(models.SubThing.id == mock_subthing.id).one_or_none()
+    assert subthing_parent_thing.id != mock_thing.id
+
+    res = client.patch(f"/subthing/{mock_subthing.id}/thing/", json={"data": {"id": mock_thing.id,  "type": "Thing"}})
     assert res.status_code == 201
-    res = client.get(f"/subthing/{subthing.id}/thing")
-    assert res.status_code == 200
-    response_data = res.get_json()
-    assert response_data["data"]["id"] == subthing.thing.id
-    
+
+    subthing_parent_thing = db_session.query(models.Thing).filter(models.Thing.id == mock_thing.id).one_or_none()
+    assert subthing_parent_thing.id == mock_thing.id
+
+
 def test_tomany_relationship(client):
     res = client.get(f"/Publishers/1/books")
     assert res.status_code == 200
+
     response_data = res.get_json()
     assert "id" in response_data["data"][0]
     book_id = response_data["data"][0]["id"]
