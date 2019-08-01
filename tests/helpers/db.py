@@ -12,19 +12,19 @@ def connect_db(db_name=None):
         host=current_app.config["DB_HOST"],
         dbname=db_name or current_app.config["DB_NAME"],
         user=current_app.config["DB_USER"],
-        password=current_app.config["DB_PWD"]
+        password=current_app.config["DB_PWD"],
     )
     con.autocommit = True
     return con
 
 
 def create_database(db_name):
-    con = connect_db('postgres')
+    con = connect_db("postgres")
     try:
         # Create database
         con.cursor().execute(f'CREATE DATABASE "{db_name}"')
     except psycopg2.ProgrammingError as e:
-        if e.pgcode == '42P04':
+        if e.pgcode == "42P04":
             # DB exists
             pass
     finally:
@@ -35,13 +35,13 @@ def create_database(db_name):
     try:
         con.cursor().execute(f'CREATE EXTENSION "uuid-ossp"')
     except psycopg2.ProgrammingError as e:
-        if e.pgcode == '42710':
+        if e.pgcode == "42710":
             # Extension exists
             pass
     con.close()
 
 
-def clean_database(db_name, schema_name='public'):
+def clean_database(db_name, schema_name="public"):
     """Drop and re-create schema"""
     try:
         con = connect_db(db_name)
@@ -52,9 +52,9 @@ def clean_database(db_name, schema_name='public'):
     try:
         cur = con.cursor()
         cur.execute(f'DROP SCHEMA if exists "{schema_name}" cascade')
-        cur.execute(f'CREATE schema {schema_name}')
+        cur.execute(f"CREATE schema {schema_name}")
     except psycopg2.ProgrammingError as e:
-        if e.pgcode == '3D000':
+        if e.pgcode == "3D000":
             # DB doesnt exist
             pass
     finally:

@@ -11,15 +11,7 @@ def test_create_thing(client, mock_thing, db_session):
     desc = "created_description"
     created = str(datetime.datetime.now())
 
-    data = {
-        "attributes":
-            {
-                "name": name,
-                "description": desc,
-                "created": created,
-            },
-        "type": "thing",
-    }
+    data = {"attributes": {"name": name, "description": desc, "created": created}, "type": "thing"}
 
     res = client.post("/thing/", json={"data": data})
     assert res.status_code == 201
@@ -129,13 +121,7 @@ def test_get_collection_startswith(client, mock_thing, db_session):
     ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
     ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
 
-    startswith_data = {
-        "meta": {
-            "args": {
-                "name": "mock",
-            }
-        }
-    }
+    startswith_data = {"meta": {"args": {"name": "mock"}}}
 
     res = client.post("/thing/startswith", json={"meta": startswith_data})
     assert res.status_code == 200
@@ -146,13 +132,7 @@ def test_get_collection_startswith(client, mock_thing, db_session):
 
 @pytest.mark.xfail  # This test might be incorrect!
 def test_get_collection_startswith_does_not_exist(client, mock_thing, db_session):
-    startswith_data = {
-        "meta": {
-            "args": {
-                "name": "foo",
-            }
-        }
-    }
+    startswith_data = {"meta": {"args": {"name": "foo"}}}
 
     res = client.post("/thing/startswith", json={"meta": startswith_data})
     assert res.status_code == 200

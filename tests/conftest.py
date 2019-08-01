@@ -60,14 +60,14 @@ def client(app, api):
         yield c
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope="function")
 def mock_subthing(db_session):
     subthing = SubThingFactory.create(name="mock_name")
 
     yield subthing
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope="function")
 def mock_thing(db_session):
     thing = ThingFactory.create(name="mock_name", created=str(datetime.datetime.now()), description="mock_description")
 
