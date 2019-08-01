@@ -17,11 +17,13 @@ class BaseFactory(factory.alchemy.SQLAlchemyModelFactory):
 class ThingFactory(BaseFactory):
     class Meta:
         model = models.Thing
+
     name = factory.Sequence(lambda n: "Thing %s" % n)
 
 
 class SubThingFactory(BaseFactory):
     class Meta:
         model = models.SubThing
+
     name = factory.Sequence(lambda n: "SubThing %s" % n)
     thing = factory.SubFactory(ThingFactory)

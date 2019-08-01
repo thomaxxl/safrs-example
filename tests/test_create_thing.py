@@ -1,76 +1,150 @@
-from tests.factories import ThingFactory, SubThingFactory
-from jsonschema import validate
-import json
 import datetime
+import pytest
 
-def test_create_thing(client):
-    name =  "created_name"
+from app import models
+
+from tests.factories import ThingFactory
+
+
+def test_create_thing(client, mock_thing, db_session):
+    name = "created_name"
     desc = "created_description"
-    data = {"attributes" : {"name" : name, "description" : desc, "created" : str(datetime.datetime.now())},
-            "type" : "thing"}
-    res = client.post("/thing/", json={"data" : data})
+    created = str(datetime.datetime.now())
+
+    data = {"attributes": {"name": name, "description": desc, "created": created}, "type": "thing"}
+
+    res = client.post("/thing/", json={"data": data})
     assert res.status_code == 201
+
     result = res.get_json()
     assert result["data"]["attributes"]["name"] == name
     assert result["data"]["attributes"]["description"] == desc
-    thing_id = result["data"]["id"]
+    assert result["data"]["attributes"]["created"] == created
 
-    res = client.get(f"/thing/{thing_id}")
-    assert res.status_code == 200
-    result = res.get_json()
-    assert result["data"]["attributes"]["name"] == name
-    assert result["data"]["attributes"]["description"] == desc
+    # Check thing was created and saved.
+    thing = db_session.query(models.Thing).filter(models.Thing.name == name).one_or_none()
 
-    patch_data = data.copy()
-    new_name = "new name"
-    patch_data["attributes"]["name"] = new_name
-    patch_data["attributes"]["description"] = None
-    patch_data["id"] = thing_id
-    res = client.patch(f"/thing/{thing_id}", json={"data" : patch_data})
-    assert res.status_code == 201
-    res = client.patch(f"/thing/{thing_id}", json={"data" : patch_data})
-    assert res.status_code == 201
-    result = res.get_json()
-    assert result["data"]["attributes"]["name"] == new_name
+    assert thing.name == name
+    assert thing.description == desc
+    assert str(thing.created) == created
 
-    res = client.get(f"/thing/{thing_id}")
-    assert res.status_code == 200
-    result = res.get_json()
-    assert result["data"]["attributes"]["name"] == new_name
-    assert not result["data"]["attributes"]["description"] 
 
-    res = client.get(f"/thing/")
-    assert res.status_code == 200
-    result = res.get_json()
-    
-    # Get collection with filter
-    res = client.get(f"/thing/?filter[name]={new_name}")
-    assert res.status_code == 200
-    result = res.get_json()
-    # name is not unique
-    assert result["meta"]["count"] > 0
-    res = client.get(f"/thing/?filter[id]={thing_id}")
-    assert res.status_code == 200
-    result = res.get_json()
-    # id is unique
-    assert result["meta"]["count"] == 1
-    assert result["data"][0]["id"] == thing_id
-   
-    startswith_data = {
-      "meta": {
-        "args": {
-          "name": ""
-        }
-      }
-    }
- 
-    res = client.post("/thing/startswith", json={"meta" : startswith_data})
+def test_get_thing(client, mock_thing, db_session):
+    res = client.get(f"/thing/{mock_thing.id}")
     assert res.status_code == 200
 
- 
-    res = client.delete(f"/thing/{thing_id}")
-    assert res.status_code == 204
-    
-    res = client.get(f"/thing/{thing_id}")
+    result = res.get_json()
+    assert result["data"]["id"] == mock_thing.id
+    assert result["data"]["attributes"]["name"] == mock_thing.name
+    assert result["data"]["attributes"]["description"] == mock_thing.description
+    assert result["data"]["attributes"]["created"] == str(mock_thing.created)
+
+
+def test_get_inexistent_thing(client, mock_thing, db_session):
+    # Check thing does not exist.
+    thing = db_session.query(models.Thing).filter(models.Thing.id == "mockId").first()
+    assert thing is None
+
+    res = client.get(f"/thing/623")
     assert res.status_code == 404
 
+
+def test_patch_thing(client, mock_thing, db_session):
+    data = mock_thing.to_dict()
+
+    new_name = "new name"
+    data["name"] = new_name
+    data["description"] = None
+    patch_data = {"attributes": data}
+    patch_data["id"] = mock_thing.id
+
+    res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
+    assert res.status_code == 201
+
+    result = res.get_json()
+    assert result["data"]["id"] == mock_thing.id
+    assert result["data"]["attributes"]["name"] == new_name
+    assert result["data"]["attributes"]["description"] is None
+    assert result["data"]["attributes"]["created"] == str(mock_thing.created)
+
+    # Check patched thing was successfully saved in the db.
+    thing = db_session.query(models.Thing).filter(models.Thing.name == mock_thing.name).one_or_none()
+
+    assert thing.id == mock_thing.id
+    assert thing.name == new_name
+    assert thing.description is None
+
+
+def test_get_collection_filtered_by_name_exact_match(client, mock_thing, db_session):
+    # Create and save two more things with the same name as the mock.
+    ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
+    ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
+
+    res = client.get(f"/thing/?filter[name]={mock_thing.name}")
+    assert res.status_code == 200
+
+    result = res.get_json()
+    assert result["meta"]["count"] == 3
+    for el in result["data"]:
+        assert el["attributes"]["name"] == mock_thing.name
+
+
+def test_get_collection_filter_by_name_for_partial_match_returs_no_results(client, mock_thing, db_session):
+    # Create and save two more things with the same name as the mock.
+    ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
+    ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
+
+    name = "mock_"
+    res = client.get(f"/thing/?filter[name]={name}")
+    assert res.status_code == 200
+
+    result = res.get_json()
+    assert result["meta"]["count"] == 0
+
+
+def test_get_collection_filter_by_id(client, mock_thing, db_session):
+    # Create and save two more things with the same name as the mock but different ids.
+    ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()), id="mock_id1")
+    ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()), id="mock_id2")
+
+    res = client.get(f"/thing/?filter[id]={mock_thing.id}")
+    assert res.status_code == 200
+
+    result = res.get_json()
+    assert result["meta"]["count"] == 1
+    # no need for uniqueness check because id is primary key.
+    assert result["data"][0]["id"] == mock_thing.id
+
+
+def test_get_collection_startswith(client, mock_thing, db_session):
+    # Create and save two more things with the same name as the mock.
+    ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
+    ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
+
+    startswith_data = {"meta": {"args": {"name": "mock"}}}
+
+    res = client.post("/thing/startswith", json={"meta": startswith_data})
+    assert res.status_code == 200
+
+    result = res.get_json()
+    assert result["meta"]["count"] == 3
+
+
+@pytest.mark.xfail  # This test might be incorrect!
+def test_get_collection_startswith_does_not_exist(client, mock_thing, db_session):
+    startswith_data = {"meta": {"args": {"name": "foo"}}}
+
+    res = client.post("/thing/startswith", json={"meta": startswith_data})
+    assert res.status_code == 200
+
+    result = res.get_json()
+    assert result["meta"]["count"] == 0
+
+
+def test_delete_thing(client, mock_thing, db_session):
+    res = client.delete(f"/thing/{mock_thing.id}")
+    assert res.status_code == 204
+
+    # Check thing was deleted from the DB.
+    deleted_thing = db_session.query(models.Thing).filter(models.Thing.id == mock_thing.id).one_or_none()
+    assert deleted_thing is None
