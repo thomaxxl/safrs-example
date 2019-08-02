@@ -14,6 +14,43 @@ class BaseFactory(factory.alchemy.SQLAlchemyModelFactory):
         return super()._create(model_class, *args, **kwargs)
 
 
+class BookFactory(BaseFactory):
+    class Meta:
+        model = models.Book
+
+    name = factory.Sequence(lambda n: "Book  %s" % n)
+
+
+class PersonFactory(BaseFactory):
+    class Meta:
+        model = models.Person
+
+    name = factory.Sequence(lambda n: "Person %s" % n)
+
+    @factory.post_generation
+    def books_read(self, create, extracted, **kwargs):
+        if not create:
+            return
+
+        if extracted:
+            self.posts = extracted
+
+
+class PublisherFactory(BaseFactory):
+    class Meta:
+        model = models.Publisher
+
+    name = factory.Sequence(lambda n: "Publisher %s" % n)
+
+    @factory.post_generation
+    def books(self, create, extracted, **kwargs):
+        if not create:
+            return
+
+        if extracted:
+            self.posts = extracted
+
+
 class ThingFactory(BaseFactory):
     class Meta:
         model = models.Thing

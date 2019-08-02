@@ -1,4 +1,5 @@
 from app import models
+from tests.factories import BookFactory
 
 
 def test_get_parent_thing_of_subthing(client, mock_subthing):
@@ -25,24 +26,40 @@ def test_patch_parent_thing_of_subthing(client, db_session, mock_subthing, mock_
     assert subthing_parent_thing.id == mock_thing.id
 
 
-def test_tomany_relationship(client):
-    res = client.get(f"/Publishers/1/books")
+def test_get_publishers_books_list(client, mock_publisher_with_3_books):
+    res = client.get(f"/Publishers/{mock_publisher_with_3_books.id}/books")
     assert res.status_code == 200
 
     response_data = res.get_json()
-    assert "id" in response_data["data"][0]
-    book_id = response_data["data"][0]["id"]
+    assert len(response_data["data"]) == 3
+    assert mock_publisher_with_3_books.books[0].id == response_data["data"][0]["id"]
+    assert mock_publisher_with_3_books.books[1].id == response_data["data"][1]["id"]
+    assert mock_publisher_with_3_books.books[2].id == response_data["data"][2]["id"]
 
-    res = client.patch(f"/Publishers/1/books", json={"data": []})
+
+def test_patch_publishers_books_list_to_empty_list(client, db_session, mock_publisher_with_3_books):
+    res = client.patch(f"/Publishers/{mock_publisher_with_3_books.id}/books", json={"data": []})
     assert res.status_code == 201
-    res = client.get(f"/Publishers/1/books")
-    assert res.status_code == 200
-    response_data = res.get_json()
-    assert not response_data["data"]
 
-    res = client.patch(f"/Publishers/1/books", json={"data": [{"id": book_id, "type": "Books"}]})
+    publishers_books_list = (
+        db_session.query(models.Book).filter(models.Book.publisher_id == mock_publisher_with_3_books.id).all()
+    )
+
+    assert len(publishers_books_list) == 0
+
+
+def test_patch_publishers_books_list(client, db_session, mock_publisher_with_3_books):
+    book = BookFactory.create(name="mock_book")
+
+    res = client.patch(
+        f"/Publishers/{mock_publisher_with_3_books.id}/books", json={"data": [{"id": book.id, "type": "Books"}]}
+    )
     assert res.status_code == 201
-    res = client.get(f"/Publishers/1/books")
-    assert res.status_code == 200
+
+    publishers_books_list = (
+        db_session.query(models.Book).filter(models.Book.publisher_id == mock_publisher_with_3_books.id).all()
+    )
+
     response_data = res.get_json()
-    assert "id" in response_data["data"][0]
+    assert len(publishers_books_list) == 1
+    assert mock_publisher_with_3_books.books[0].id == response_data["data"][0]["id"]
