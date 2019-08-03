@@ -163,9 +163,48 @@ def test_filter(client):
     res = client.get(f"/People/?filter=xx")
     assert res.status_code == 200
 
+    res = client.get(f"/People/?filter[invalid]=xx")
+    assert res.status_code == 200
+
     response_data = res.get_json()
     assert response_data["data"][0] is not None
 
     res = client.get(f"/thing/?filter=xx")
     assert res.status_code == 200
     response_data = res.get_json()
+
+
+def test_sort(client):
+    res = client.get(f"/People/?sort=xx")
+    assert res.status_code == 200
+
+    res = client.get(f"/People/?sort=name")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    person_test_id = response_data["data"][0]["id"]
+    
+    res = client.get(f"/People/?sort=-name")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    assert response_data["data"][0]["id"] != person_test_id
+    
+    res = client.get(f"/Publishers/1/books?sort=-title")
+    assert res.status_code == 200
+
+    res = client.get(f"/Publishers/1/books?sort=title")
+    assert res.status_code == 200
+
+    res = client.get(f"/People/{person_test_id}/books_read?sort=-title")
+    assert res.status_code == 200
+
+    res = client.get(f"/People/{person_test_id}/books_read?sort=title")
+    assert res.status_code == 200
+
+def test_include(client):
+    res = client.get(f"/People")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    person_test_id = response_data["data"][0]["id"]
+    
+    res = client.get(f"/People/{person_test_id}/?include=books_read")
+    assert res.status_code == 200
