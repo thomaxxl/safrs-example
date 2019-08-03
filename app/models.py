@@ -56,6 +56,9 @@ class Thing(BaseModel):
     def filter(cls, *args, **kwargs):
         return cls.query.all()
 
+    @jsonapi_rpc(http_methods=["POST", "GET"])
+    def none(self):
+        return {}
 
 class SubThing(BaseModel):
     __tablename__ = "subthing"

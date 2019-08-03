@@ -119,13 +119,27 @@ def test_patch_reader_person_fails_for_invalid_id(client, db_session, mock_perso
     assert res.status_code == 400
 
 
+def test_add_invalid_book_to_reader_person_books_read_list(client, db_session, mock_person_with_3_books_read):
+    newly_read_book = BookFactory.create(name="mock_Read_book")
+
+    data = [{"id": newly_read_book.id}] # no type
+
+    res = client.post(f"/People/{mock_person_with_3_books_read.id}/books_read", json={"data": data})
+    assert res.status_code == 403
+
+    data = [{"id": "invalid id"}] # invalid id
+
+    res = client.post(f"/People/{mock_person_with_3_books_read.id}/books_read", json={"data": data})
+    assert res.status_code == 404
+
+
 def test_add_book_to_reader_person_books_read_list(client, db_session, mock_person_with_3_books_read):
     newly_read_book = BookFactory.create(name="mock_Read_book")
 
-    data = [{"id": newly_read_book.id}]
+    data = [{"id": newly_read_book.id, "type": newly_read_book._s_type}]
 
     res = client.post(f"/People/{mock_person_with_3_books_read.id}/books_read", json={"data": data})
-    assert res.status_code == 200
+    assert res.status_code == 204
 
     person_books_read_list = (
         db_session.query(models.Book).filter(models.Book.reader_id == mock_person_with_3_books_read.id).all()

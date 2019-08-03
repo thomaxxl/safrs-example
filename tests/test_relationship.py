@@ -52,7 +52,7 @@ def test_patch_publishers_books_list(client, db_session, mock_publisher_with_3_b
     book = BookFactory.create(name="mock_book")
 
     res = client.patch(
-        f"/Publishers/{mock_publisher_with_3_books.id}/books", json={"data": [{"id": book.id, "type": "Books"}]}
+        f"/Publishers/{mock_publisher_with_3_books.id}/books", json={"data": [{"id": book.id, "type": book._s_type}]}
     )
     assert res.status_code == 201
 
