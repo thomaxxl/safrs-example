@@ -24,7 +24,7 @@ CREATE EXTENSION "uuid-ossp";
 edit [config/base.py](config/base.py) 
 
 ```python
-SWAGGER_HOST = '172.16.17.172'
+SWAGGER_HOST = '172.18.17.172'
 SWAGGER_PORT = 1237
 ```
 

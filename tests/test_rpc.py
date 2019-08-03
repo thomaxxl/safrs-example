@@ -20,8 +20,15 @@ def test_json_api_rpc_with_json_parameter(client):
     assert response_data["meta"]["kwargs"] == rpc_args
 
 
-def test_invalid_json_api_rpc(client, mock_thing):
+def test_invalid_json_api_rpc_1(client, mock_thing):
     invalid_rcp_args = {"foo": "bar"}
 
     res = client.get("/thing/get_by_name", json={"meta": {"args": invalid_rcp_args}})
     assert res.status_code == 500
+
+
+def test_invalid_json_api_rpc_2(client, mock_thing):
+    invalid_rcp_args = {"foo": "bar"}
+
+    res = client.get("/thing/x/send_thing", json={"meta": {"args": invalid_rcp_args}})
+    assert res.status_code == 404
