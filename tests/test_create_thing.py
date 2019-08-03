@@ -57,6 +57,8 @@ def test_patch_thing(client, mock_thing, db_session):
     data["description"] = None
     patch_data = {"attributes": data}
     patch_data["id"] = mock_thing.id
+    patch_data["type"] = mock_thing._s_type
+
 
     res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
     assert res.status_code == 201
@@ -73,6 +75,44 @@ def test_patch_thing(client, mock_thing, db_session):
     assert thing.id == mock_thing.id
     assert thing.name == new_name
     assert thing.description is None
+
+
+def test_invalid_patch_thing_0(client, mock_thing, db_session):
+    data = mock_thing.to_dict()
+
+    new_name = "new name"
+    data["name"] = new_name
+    data["description"] = None
+    patch_data = {"attributes": data}
+    
+    res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
+    assert res.status_code == 400
+
+
+def test_invalid_patch_thing_1(client, mock_thing, db_session):
+    data = mock_thing.to_dict()
+
+    new_name = "new name"
+    data["name"] = new_name
+    data["description"] = None
+    patch_data = {"attributes": data}
+    patch_data["type"] = mock_thing._s_type
+    
+    res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
+    assert res.status_code == 400
+
+
+def test_invalid_patch_thing_2(client, mock_thing, db_session):
+    data = mock_thing.to_dict()
+
+    new_name = "new name"
+    data["name"] = new_name
+    data["description"] = None
+    patch_data = {"attributes": data}
+    patch_data["id"] = mock_thing.id
+    
+    res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
+    assert res.status_code == 403
 
 
 def test_get_collection_filtered_by_name_exact_match(client, mock_thing, db_session):
