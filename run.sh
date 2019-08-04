@@ -10,6 +10,7 @@ test="docker-compose run --rm -e CONFIG_MODULE=config/test.py safrs pytest --cov
 logs="docker-compose logs -f --tail 40"
 db="docker-compose -p safrs_db -f docker-compose.db.yml"
 db_shell="$db exec psql psql -U postgres"
+db_mysql="$db exec mysql mysql -p"
 
 set -x
 ${!1} ${@:2}
