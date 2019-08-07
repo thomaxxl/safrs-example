@@ -6,7 +6,7 @@ from app import models
 from tests.factories import ThingFactory
 
 
-def test_create_thing(client, mock_thing, db_session):
+def test_create_thing(client, db_session):
     name = "created_name"
     desc = "created_description"
     created = str(datetime.datetime.now())
@@ -28,9 +28,6 @@ def test_create_thing(client, mock_thing, db_session):
     assert thing.description == desc
     assert str(thing.created) == created
 
-    res = client.post(f"/thing/{thing.id}", json={"data": data})
-    assert res.status_code == 403
-
 
 def test_get_thing(client, mock_thing, db_session):
     res = client.get(f"/thing/{mock_thing.id}")
@@ -41,15 +38,6 @@ def test_get_thing(client, mock_thing, db_session):
     assert result["data"]["attributes"]["name"] == mock_thing.name
     assert result["data"]["attributes"]["description"] == mock_thing.description
     assert result["data"]["attributes"]["created"] == str(mock_thing.created)
-
-
-def test_get_inexistent_thing(client, mock_thing, db_session):
-    # Check thing does not exist.
-    thing = db_session.query(models.Thing).filter(models.Thing.id == "mockId").first()
-    assert thing is None
-
-    res = client.get(f"/thing/623")
-    assert res.status_code == 404
 
 
 def test_patch_thing(client, mock_thing, db_session):
@@ -78,62 +66,6 @@ def test_patch_thing(client, mock_thing, db_session):
     assert thing.id == mock_thing.id
     assert thing.name == new_name
     assert thing.description is None
-
-
-def test_invalid_patch_thing_0(client, mock_thing, db_session):
-    data = mock_thing.to_dict()
-
-    new_name = "new name"
-    data["name"] = new_name
-    data["description"] = None
-    patch_data = {"attributes": data}
-    
-    res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
-    # missing type and id
-    assert res.status_code == 400
-
-
-def test_invalid_patch_thing_1(client, mock_thing, db_session):
-    data = mock_thing.to_dict()
-
-    new_name = "new name"
-    data["name"] = new_name
-    data["description"] = None
-    patch_data = {"attributes": data}
-    patch_data["type"] = mock_thing._s_type
-    
-    res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
-    # missing id
-    assert res.status_code == 400
-
-
-def test_invalid_patch_thing_2(client, mock_thing, db_session):
-    data = mock_thing.to_dict()
-
-    new_name = "new name"
-    data["name"] = new_name
-    data["description"] = None
-    patch_data = {"attributes": data}
-    patch_data["id"] = mock_thing.id
-    
-    res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
-    # missing type
-    assert res.status_code == 403
-
-
-def test_invalid_patch_thing_2(client, mock_thing, db_session):
-    data = mock_thing.to_dict()
-
-    new_name = "new name"
-    data["name"] = new_name
-    data["description"] = None
-    patch_data = {"attributes": data}
-    patch_data["id"] = 'invalid id'
-    patch_data["type"] = mock_thing._s_type
-    
-    res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
-    # missing type
-    assert res.status_code == 400
 
 
 def test_get_collection_filtered_by_name_exact_match(client, mock_thing, db_session):
@@ -209,3 +141,33 @@ def test_delete_thing(client, mock_thing, db_session):
     # Check thing was deleted from the DB.
     deleted_thing = db_session.query(models.Thing).filter(models.Thing.id == mock_thing.id).one_or_none()
     assert deleted_thing is None
+
+
+def test_thing_get_by_name(client, mock_thing):
+    res = client.get("/thing/get_by_name", query_string={"name": "mock_thing"})
+    assert res.status_code == 200
+
+    result = res.get_json()
+    assert result["data"]["id"] == mock_thing.id
+    assert result["data"]["attributes"]["name"] == mock_thing.name
+
+
+def test_thing_get_fields(client, mock_thing):
+    """
+        Test that only the specified fields are returned
+    """
+    q_params = {"fields[thing]": "name"}
+
+    res = client.get(f"/thing/{mock_thing.id}", query_string=q_params)
+
+    assert res.status_code == 200
+    assert res.get_json()["data"]["id"] == mock_thing.id
+    assert res.get_json()["data"]["attributes"]["name"] == mock_thing.name
+    assert res.get_json()["data"]["attributes"].get("description") is None
+
+
+def test_thing_api_filter(client):
+    res = client.get(f"/thing/?filter=xx")
+    assert res.status_code == 200
+    response_data = res.get_json()
+
