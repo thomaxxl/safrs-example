@@ -9,7 +9,7 @@ def test_thing_get_fields(client, mock_thing):
     """
         Test that only the specified fields are returned
     """
-    q_params = {"fields[thing]": "name"}
+    q_params = {f"fields[{mock_thing._s_type}]": "name"}
 
     res = client.get(f"/thing/{mock_thing.id}", query_string=q_params)
 
@@ -50,7 +50,7 @@ def test_delete(client, db_session, mock_person_with_3_books_read):
         "data": [
             {
                 "id": mock_person_with_3_books_read.books_read[0].id,
-                "type": "Books",
+                "type": mock_person_with_3_books_read.books_read[0]._s_type,
             }
         ],
     }
@@ -92,7 +92,7 @@ def test_patch_reader_person(client, db_session, mock_person_with_3_books_read):
     data = {
         "attributes": {"name": "Reader 0 Changed Name", "email": "reader_email0", "dob": "1988-08-09", "comment": ""},
         "id": mock_person_with_3_books_read.id,
-        "type": "People",
+        "type":  mock_person_with_3_books_read._s_type,
     }
 
     res = client.patch(f"/People/{mock_person_with_3_books_read.id}", json={"data": data})
