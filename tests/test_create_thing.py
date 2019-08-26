@@ -29,7 +29,7 @@ def test_create_thing(client, mock_thing, db_session):
     assert str(thing.created) == created
 
     res = client.post(f"/thing/{thing.id}", json={"data": data})
-    assert res.status_code == 403
+    assert res.status_code == 405
 
 
 def test_get_thing(client, mock_thing, db_session):
