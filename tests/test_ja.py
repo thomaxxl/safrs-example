@@ -1,7 +1,7 @@
+# some tests
+# pretty chaotic :/
 import pytest
-
-from app import models
-
+from app import models, models_stateless
 from tests.factories import BookFactory
 
 
@@ -24,6 +24,72 @@ def test_validate_swagger(client):
     assert res.status_code == 200
     swagger_ = res.get_json()
 
+
+def test_db_settings(client, mock_thing):
+    res = client.get(f"/thing/{mock_thing.id}") 
+    assert res.status_code == 200
+    mock_thing._s_expunge()
+
+
+    twoc = models.ThingWOCommit(name="tmp_name")
+    res = client.get(f"/thing_without_commit/{twoc.id}") 
+    assert res.status_code == 404
+
+    twc = models.ThingWCommit(name="tmp_name2")
+    res = client.get(f"/thing_with_commit/{twc.id}") 
+    assert res.status_code == 200
+
+    twc2 = models.ThingWCommit(id=twc.id)
+    assert twc2.name == twc.name
+    
+    assert len(models.ThingWCommit.query.all()) == 1
+    clone = twc._s_clone()
+    assert clone.name == twc.name
+    #assert clone.id != twc.id
+    assert len(models.ThingWCommit.query.all()) == 2
+    clone = twc._s_clone(description="d2")
+    assert clone.description == "d2"
+
+def test_get_instance(client, mock_thing):
+    
+    t2 = models.Thing.get_instance(item = {"id": mock_thing.id, "type": mock_thing._s_type})
+    assert t2.id == mock_thing.id
+
+    try:
+        models.Thing.get_instance(item = {"type": mock_thing._s_type})
+    except:
+        pass
+
+    try:
+        models.Thing.get_instance(item = {"id": mock_thing.id})
+    except:
+        pass
+
+    try:
+        models.Thing.get_instance(id="n/a")
+    except:
+        pass
+
+
+
+def test_Type(client, mock_thing):
+    my_type = "test"
+    twt = models.ThingWType(type=my_type)
+   
+    res = client.get(f"/thing_with_type")
+    assert res.status_code == 200
+    assert res.get_json()["data"][0]["attributes"]["Type"] == my_type
+
+
+    assert twt.Type == twt.type
+    twt.type = "tmp"
+    assert twt.Type == twt.type
+    twt.Type = "tmp"
+    assert twt.Type == twt.type
+   
+def test_stateless(client):
+    test = models_stateless.Test()
+    assert test._s_columns == []
 
 @pytest.mark.xfail  # This test might be incorrect!
 def test_delete_no_type_fails(client, db_session, mock_person_with_3_books_read):
@@ -97,6 +163,38 @@ def test_post_new_reader_person_invalid_type(client, db_session):
 
     res = client.post("/People", json={"data": data})
     assert res.status_code == 400
+
+
+def test_post_invalid_datetime(client, db_session):
+    """
+        Test SAFRSBase datetime parsing
+    """
+    reader_name = "Test Reader0"
+    data = {
+        "attributes": {"name": reader_name, "email": "reader_email0", "comment": ""},
+        "type": "Person",
+    }
+
+    res = client.post("/People", json={"data": data})
+    assert res.status_code ==  201
+
+    reader_name = "Test Reader1"
+    data = {
+        "attributes": {"name": reader_name, "dob": "iii"},
+        "type": "Person",
+    }
+
+    res = client.post("/People", json={"data": data})
+    assert res.status_code == 500
+
+    reader_name = "Test Reader1"
+    data = {
+        "attributes": {"name": reader_name, "created": "iii"},
+        "type": "Person",
+    }
+
+    res = client.post("/People", json={"data": data})
+    assert res.status_code == 500
 
 
 def test_patch_reader_person(client, db_session, mock_person_with_3_books_read):

@@ -1,13 +1,13 @@
 import logging.config
 import hashlib
 import sys
-print(sys.path)
 
 import flask
 from flask import Flask
 from safrs import SAFRSAPI
 from flask_migrate import Migrate
-from app.models import db, Thing, SubThing, Person, Book, Review, Publisher
+from app.models import db, Thing, SubThing, Person, Book, Review, Publisher,ThingWOCommit, ThingWCommit, ThingWType
+from app.models_stateless import Test
 #from app.models import db, Thing, SubThing
 
 migrate = Migrate()
@@ -20,7 +20,11 @@ def create_api(app, swagger_host=None, swagger_port=5000):
         }  # Customized swagger will be merged
     api = SAFRSAPI(app, host=swagger_host, port=swagger_port, custom_swagger=custom_swagger)
     api.expose_object(Thing)
+    api.expose_object(ThingWType)
     api.expose_object(SubThing)
+    api.expose_object(ThingWOCommit)
+    api.expose_object(ThingWCommit)
+    api.expose_object(Test)
 
 
     for i in range(30):

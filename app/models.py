@@ -3,6 +3,7 @@ from safrs.api_methods import startswith
 from sqlalchemy import func
 from app.base_model import db, BaseModel
 from safrs import SAFRSBase
+from safrs.safrs_types import SafeString
 import datetime
 import hashlib
 
@@ -15,7 +16,7 @@ class Thing(BaseModel):
 
     id = db.Column(db.String, primary_key=True, server_default=func.uuid_generate_v1())
     name = db.Column(db.String)
-    description = db.Column(db.String)
+    description = db.Column(SafeString)
     created = db.Column(db.DateTime)
 
     @classmethod
@@ -69,6 +70,29 @@ class SubThing(BaseModel):
     thing_id = db.Column(db.String, db.ForeignKey("thing.id"))
     thing = db.relationship("Thing", foreign_keys=thing_id)
 
+
+class ThingWType(BaseModel):
+    __tablename__ = "thing_with_type"
+    db_commit = True
+    id = db.Column(db.String, primary_key=True, server_default=func.uuid_generate_v1())
+    type= db.Column(db.String, nullable=False)
+
+
+class ThingWCommit(BaseModel):
+    __tablename__ = "thing_with_commit"
+    db_commit = True
+    id = db.Column(db.String, primary_key=True, server_default=func.uuid_generate_v1())
+    name = db.Column(db.String)
+    description = db.Column(db.String)
+
+
+class ThingWOCommit(BaseModel):
+    __tablename__ = "thing_without_commit"
+    db_commit = False
+    id = db.Column(db.String, primary_key=True, server_default=func.uuid_generate_v1())
+    name = db.Column(db.String)
+ 
+
 class Book(BaseModel):
     """
         description: Book description
@@ -97,6 +121,7 @@ class Person(BaseModel):
     email = db.Column(db.String, default="")
     comment = db.Column(db.Text, default="")
     dob = db.Column(db.Date)
+    created = db.Column(db.DateTime)
     books_read = db.relationship(
         "Book",
         backref="reader",
