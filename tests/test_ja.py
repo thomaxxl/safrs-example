@@ -69,7 +69,7 @@ def test_post_new_reader_person(client, db_session):
     reader_name = "Test Reader"
     data = {
         "attributes": {"name": reader_name, "dob": "1970-01-09", "email": "reader_email0", "comment": ""},
-        "type": "People",
+        "type": "Person",
     }
 
     res = client.post("/People", json={"data": data})
@@ -86,6 +86,17 @@ def test_post_new_reader_person(client, db_session):
     assert str(new_person.dob) == "1970-01-09"
     assert new_person.email == "reader_email0"
     assert new_person.comment == ""
+
+
+def test_post_new_reader_person_invalid_type(client, db_session):
+    reader_name = "Test Reader"
+    data = {
+        "attributes": {"name": reader_name, "dob": "1970-01-09", "email": "reader_email0", "comment": ""},
+        "type": "invalid_type",
+    }
+
+    res = client.post("/People", json={"data": data})
+    assert res.status_code == 400
 
 
 def test_patch_reader_person(client, db_session, mock_person_with_3_books_read):

@@ -11,7 +11,7 @@ def test_create_thing(client, mock_thing, db_session):
     desc = "created_description"
     created = str(datetime.datetime.now())
 
-    data = {"attributes": {"name": name, "description": desc, "created": created}, "type": "thing"}
+    data = {"attributes": {"name": name, "description": desc, "created": created}, "type": mock_thing._s_type}
 
     res = client.post("/thing/", json={"data": data})
     assert res.status_code == 201
