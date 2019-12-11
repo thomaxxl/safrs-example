@@ -8,7 +8,7 @@ SQLALCHEMY_DATABASE_URI = f'postgresql://{DB_USER}:{DB_PWD}@{DB_HOST}/{DB_NAME}'
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 
 # feels dirty to hard code
-SWAGGER_HOST = os.getenv('SWAGGER_HOST','192.168.235.130')
+SWAGGER_HOST = os.getenv('SWAGGER_HOST','172.16.17.12')
 SWAGGER_PORT = int(os.getenv('SWAGGER_PORT',1237))
 
 

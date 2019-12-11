@@ -28,6 +28,42 @@ def test_create_thing(client, mock_thing, db_session):
     assert thing.description == desc
     assert str(thing.created) == created
 
+    res_location = res.headers["Location"]
+    res = client.get(res_location)
+    result = res.get_json()
+    assert result["data"]["attributes"]["name"] == name
+    assert result["data"]["attributes"]["description"] == desc
+    assert result["data"]["attributes"]["created"] == created
+
+    res = client.post(f"/thing/{thing.id}", json={"data": data})
+    assert res.status_code == 405
+
+def test_create_things(client, mock_thing, db_session):
+
+    data = []
+    for i in range(10):
+        name = f"created_name{i}"
+        desc = f"created_description{i}"
+        created = str(datetime.datetime.now())
+
+        data += [{"attributes": {"name": name, "description": desc, "created": created}, "type": mock_thing._s_type}]
+
+    res = client.post("/thing/", json={"data": data})
+    assert res.status_code == 201
+
+    result = res.get_json()
+    assert result == {}
+    """assert result["data"]["attributes"]["name"] == name
+    assert result["data"]["attributes"]["description"] == desc
+    assert result["data"]["attributes"]["created"] == created"""
+
+    # Check thing was created and saved.
+    thing = db_session.query(models.Thing).filter(models.Thing.name == name).one_or_none()
+
+    assert thing.name == name
+    assert thing.description == desc
+    assert str(thing.created) == created
+
     res = client.post(f"/thing/{thing.id}", json={"data": data})
     assert res.status_code == 405
 
