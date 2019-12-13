@@ -12,11 +12,19 @@ from tests.factories import (
     SubThingFactory,
 )
 
+from flask.testing import FlaskClient
+
+class SafrsClient(FlaskClient):
+    def __init__(self, authentication=None, *args, **kwargs):
+        FlaskClient.__init__(*args, **kwargs)
+        self.headers["Content-Type"] = "application/vnd.api+json; ext=bulk"
+        self._authentication = authentication
 
 @pytest.fixture(scope="session")
 def app():
     """Setup our flask test app and provide an app context"""
     _app = create_app()
+    #_app.test_client_class = SafrsClient
     with _app.app_context():
         yield _app
 
@@ -62,6 +70,8 @@ def api(app, database):
 @pytest.fixture(scope="session")
 def client(app, api):
     """Setup an flask app client, yields an flask app client"""
+    headers = {}
+    headers["Content-Type"] = "application/vnd.api+json; ext=bulk"
     with app.test_client() as c:
         yield c
 

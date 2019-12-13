@@ -39,6 +39,9 @@ def test_create_thing(client, mock_thing, db_session):
     assert res.status_code == 405
 
 def test_create_things(client, mock_thing, db_session):
+    """
+        Test bulk create extension
+    """
 
     data = []
     for i in range(10):
