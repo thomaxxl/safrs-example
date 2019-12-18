@@ -13,12 +13,22 @@ from tests.factories import (
 )
 
 from flask.testing import FlaskClient
+from werkzeug.datastructures import Headers
+
 
 class SafrsClient(FlaskClient):
-    def __init__(self, authentication=None, *args, **kwargs):
-        FlaskClient.__init__(*args, **kwargs)
-        self.headers["Content-Type"] = "application/vnd.api+json; ext=bulk"
-        self._authentication = authentication
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def open(self, *args, **kwargs):
+        custom_headers = Headers({
+            'Content-Type': 'application/vnd.api+json; ext=bulk'
+        })
+        headers = kwargs.pop('headers', Headers())
+        headers.extend(custom_headers)
+        kwargs['headers'] = headers
+        return super().open(*args, **kwargs)
+
 
 @pytest.fixture(scope="session")
 def app():
@@ -72,6 +82,8 @@ def client(app, api):
     """Setup an flask app client, yields an flask app client"""
     headers = {}
     headers["Content-Type"] = "application/vnd.api+json; ext=bulk"
+
+    app.test_client_class = SafrsClient
     with app.test_client() as c:
         yield c
 
