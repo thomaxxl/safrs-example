@@ -2,7 +2,7 @@ import datetime
 import pytest
 
 from app import models
-
+from pprint import pprint
 from tests.factories import ThingFactory
 
 
@@ -31,6 +31,7 @@ def test_create_thing(client, mock_thing, db_session):
     res_location = res.headers["Location"]
     res = client.get(res_location)
     result = res.get_json()
+    pprint(result)
     assert result["data"]["attributes"]["name"] == name
     assert result["data"]["attributes"]["description"] == desc
     assert result["data"]["attributes"]["created"] == created
@@ -117,6 +118,35 @@ def test_patch_thing(client, mock_thing, db_session):
     assert thing.id == mock_thing.id
     assert thing.name == new_name
     assert thing.description is None
+
+def test_patch_things(client, mock_thing, db_session):
+    """
+        test bulk patch
+    """
+    return
+    data = mock_thing.to_dict()
+
+    new_name = "new name"
+    new_desc = "new desc"
+    data["name"] = new_name
+    data["description"] = new_desc
+    patch_data = {"attributes": data}
+    patch_data["id"] = mock_thing.id
+    patch_data["type"] = mock_thing._s_type
+
+
+    res = client.patch(f"/thing/", json={"data": [patch_data]})
+    assert res.status_code == 201
+
+    result = res.get_json()
+    assert result == {}
+
+    # Check patched thing was successfully saved in the db.
+    thing = db_session.query(models.Thing).filter(models.Thing.name == mock_thing.name).one_or_none()
+
+    assert thing.id == mock_thing.id
+    assert thing.name == new_name
+    assert thing.description == new_desc
 
 
 def test_invalid_patch_thing_0(client, mock_thing, db_session):
