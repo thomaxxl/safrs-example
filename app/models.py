@@ -1,5 +1,5 @@
 from safrs import jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response, paginate
-from safrs.api_methods import startswith
+from safrs.api_methods import startswith, duplicate
 from sqlalchemy import func
 from app.base_model import db, BaseModel
 from safrs import SAFRSBase
@@ -136,6 +136,7 @@ class Person(BaseModel):
     password = db.Column(db.Text, default="")
     exclude_attrs = ["password"]
 
+
     # Following methods are exposed through the REST API
     @jsonapi_rpc(http_methods=["POST"])
     def send_mail(self, email):
@@ -192,6 +193,7 @@ class Publisher(BaseModel):
     name = db.Column(db.String, default="")
     books = db.relationship("Book", back_populates="publisher", lazy="dynamic")
     #books = db.relationship("Book", back_populates="publisher")
+    duplicate = duplicate
 
     def __init__(self, *args, **kwargs):
         custom_field = kwargs.pop("custom_field", None)

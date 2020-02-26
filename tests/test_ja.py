@@ -317,3 +317,25 @@ def test_include(client):
     
     res = client.get(f"/People/{person_test_id}/?include=books_read")
     assert res.status_code == 200
+
+def test_duplicate(client):
+    res = client.get(f"/Publishers")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    pub_test_id = response_data["data"][0]["id"]
+    
+    res = client.post(f"/Publishers/{pub_test_id}/duplicate", json={})
+
+    assert res.status_code == 200
+    dup_response_data = res.get_json()
+    dup_pub_test_id = dup_response_data["data"]["id"]
+    assert dup_response_data["data"]["attributes"]["name"] == response_data["data"][0]["attributes"]["name"]
+
+    res = client.get(f"/Publishers/{dup_pub_test_id}")
+    assert res.status_code == 200
+    dup_response_data = res.get_json()
+    dup_pub_test_id = dup_response_data["data"]["id"]
+    assert dup_response_data["data"]["attributes"]["name"] == response_data["data"][0]["attributes"]["name"]
+
+
+
