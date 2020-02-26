@@ -318,6 +318,46 @@ def test_include(client):
     res = client.get(f"/People/{person_test_id}/?include=books_read")
     assert res.status_code == 200
 
+def test_hidden_column(client):
+    res = client.get(f"/People")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    person_data = response_data["data"][0]
+    person_id = person_data["id"]
+
+    person_attrs = person_data["attributes"]
+    assert "password" not in person_attrs
+    
+    db_person = models.Person.get_instance(person_id)
+    db_person.password = "test"
+    assert getattr(db_person,"password") == "test"
+
+    res = client.get(f"/People/{person_id}")
+    assert res.status_code == 200
+    response_data = res.get_json()["data"]
+    
+    # verify the password isn't in the attributes
+    person_attrs = response_data["attributes"]
+    assert "password" not in person_attrs
+    
+    person_attrs["password"] = "dontchange"
+    person_attrs["name"] = "newname"
+
+    # verify a patch doesn't change the password
+    res = client.patch(f"/People/{person_id}", json = { "data" : { "attributes" : person_attrs , "type": "Person" , "id" : person_id}} )
+
+    res = client.get(f"/People/{person_id}")
+    assert res.status_code == 200
+    response_data = res.get_json()["data"]
+    
+    person_attrs = response_data["attributes"]
+    assert "password" not in person_attrs
+    assert person_attrs["name"] == "newname"
+ 
+    db_person = models.Person.get_instance(person_id)
+    assert getattr(db_person,"password") == "test"
+
+
 def test_duplicate(client):
     res = client.get(f"/Publishers")
     assert res.status_code == 200

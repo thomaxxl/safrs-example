@@ -7,6 +7,24 @@ from safrs.safrs_types import SafeString
 import datetime
 import hashlib
 
+class HiddenColumn(db.Column):
+    """
+        The "expose" attribute indicates that the column shouldn't be exposed
+    """
+    expose = False
+
+
+class DocumentedColumn(db.Column):
+    """
+        The class attributes are used for the swagger
+    """
+    description = "My custom column description"
+    swagger_type = "string"
+    swagger_format = "string"
+    name_format = "filter[{}]" # Format string with the column name as argument
+    required = False
+    default_filter = ""
+
 
 class Thing(BaseModel):
     """
@@ -18,6 +36,7 @@ class Thing(BaseModel):
     name = db.Column(db.String)
     description = db.Column(SafeString)
     created = db.Column(db.DateTime)
+    documented_column = DocumentedColumn(db.String)
 
     @classmethod
     @jsonapi_rpc(http_methods=["GET"])
@@ -133,8 +152,8 @@ class Person(BaseModel):
     )
     reviews = db.relationship("Review", backref="reader")
 
-    password = db.Column(db.Text, default="")
-    exclude_attrs = ["password"]
+    password = HiddenColumn(db.Text, default="")
+    #exclude_attrs = ["password"]
 
 
     # Following methods are exposed through the REST API
