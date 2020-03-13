@@ -20,7 +20,7 @@ def test_patch_parent_thing_of_subthing(client, db_session, mock_subthing, mock_
     res = client.patch(
         f"/subthing/{mock_subthing.id}/thing/", json={"data": {"id": mock_thing.id, "type": mock_thing._s_type}}
     )
-    assert res.status_code == 201
+    assert res.status_code == 200
 
     subthing_parent_thing = db_session.query(models.Thing).filter(models.Thing.id == mock_thing.id).one_or_none()
     assert subthing_parent_thing.id == mock_thing.id
@@ -39,7 +39,7 @@ def test_get_publishers_books_list(client, mock_publisher_with_3_books):
 
 def test_patch_publishers_books_list_to_empty_list(client, db_session, mock_publisher_with_3_books):
     res = client.patch(f"/Publishers/{mock_publisher_with_3_books.id}/books", json={"data": []})
-    assert res.status_code == 201
+    assert res.status_code == 200
 
     publishers_books_list = (
         db_session.query(models.Book).filter(models.Book.publisher_id == mock_publisher_with_3_books.id).all()
@@ -54,7 +54,7 @@ def test_patch_publishers_books_list(client, db_session, mock_publisher_with_3_b
     res = client.patch(
         f"/Publishers/{mock_publisher_with_3_books.id}/books", json={"data": [{"id": book.id, "type": book._s_type}]}
     )
-    assert res.status_code == 201
+    assert res.status_code == 200
 
     publishers_books_list = (
         db_session.query(models.Book).filter(models.Book.publisher_id == mock_publisher_with_3_books.id).all()
