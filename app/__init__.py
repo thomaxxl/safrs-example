@@ -6,7 +6,7 @@ import flask
 from flask import Flask
 from safrs import SAFRSAPI
 from flask_migrate import Migrate
-from app.models import db, Thing, SubThing, Person, Book, Review, Publisher,ThingWOCommit, ThingWCommit, ThingWType
+from app.models import db, Thing, SubThing, Person, Book, Review, Publisher,ThingWOCommit, ThingWCommit, ThingWType, AuthUser
 from app.models_stateless import Test
 #from app.models import db, Thing, SubThing
 
@@ -25,6 +25,7 @@ def create_api(app, swagger_host=None, swagger_port=5000):
     api.expose_object(ThingWOCommit)
     api.expose_object(ThingWCommit)
     api.expose_object(Test)
+    api.expose_object(AuthUser)
 
 
     for i in range(30):

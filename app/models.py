@@ -4,6 +4,7 @@ from sqlalchemy import func
 from app.base_model import db, BaseModel
 from safrs import SAFRSBase
 from safrs.safrs_types import SafeString
+from flask_httpauth import HTTPBasicAuth
 import datetime
 import hashlib
 
@@ -244,3 +245,34 @@ class Review(BaseModel):
     book_id = db.Column(db.String, db.ForeignKey("Books.id"), primary_key=True)
     review = db.Column(db.String, default="")
     created = db.Column(db.DateTime)
+
+
+auth = HTTPBasicAuth()
+
+@auth.verify_password
+def verify_password(username_or_token, password):
+
+    if username_or_token == "user" and password == "password":
+        return True
+
+    return False
+
+def post_login_required(func):
+    def post_decorator(*args, **kwargs):
+        return auth.login_required(func)(*args, **kwargs)
+
+    if func.__name__ in ("post", "patch", "delete"):
+        return post_decorator
+
+    return func
+
+
+class AuthUser(SAFRSBase, db.Model):
+    """
+        description: User description
+    """
+
+    __tablename__ = "auth_users"
+    id = db.Column(db.String, primary_key=True)
+    username = db.Column(db.String)
+    custom_decorators = [post_login_required]

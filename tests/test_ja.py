@@ -378,4 +378,40 @@ def test_duplicate(client):
     assert dup_response_data["data"]["attributes"]["name"] == response_data["data"][0]["attributes"]["name"]
 
 
+import base64
+from werkzeug.datastructures import Headers
 
+def test_auth_user(client, mock_thing):
+    """
+        Test the custom_decorators (with authentication)
+    """
+    
+    assert len(models.AuthUser.query.all()) == 0
+
+    res = client.get(f"/auth_users")
+    assert res.status_code == 200
+    username = "username"
+    data = {
+        "attributes": {"username": username},
+        "type": "AuthUser",
+    }
+
+    res = client.post("/auth_users", json={"data": data})
+    assert res.status_code == 401
+
+    credentials = base64.b64encode(b"user:password").decode('utf-8')
+    headers = Headers()
+    headers.add("Authorization", f"Basic {credentials}")
+    res = client.post("/auth_users", json={"data": data}, headers=headers)
+    assert res.status_code == 201
+
+    uid = models.AuthUser.query.first().id
+    assert models.AuthUser.query.first().username == username
+
+    res = client.delete(f"/auth_users/{uid}")
+    assert res.status_code == 401
+
+    res = client.delete(f"/auth_users/{uid}", headers=headers)
+    assert res.status_code == 204
+
+    assert len(models.AuthUser.query.all()) == 0
