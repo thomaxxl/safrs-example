@@ -12,7 +12,7 @@ class HiddenColumn(db.Column):
     """
         The "expose" attribute indicates that the column shouldn't be exposed
     """
-    expose = False
+    permissions = "w"
 
 
 class DocumentedColumn(db.Column):
@@ -275,4 +275,4 @@ class AuthUser(SAFRSBase, db.Model):
     __tablename__ = "auth_users"
     id = db.Column(db.String, primary_key=True)
     username = db.Column(db.String)
-    custom_decorators = [post_login_required]
+    decorators = [post_login_required]
