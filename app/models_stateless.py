@@ -152,7 +152,7 @@ class Test(SAFRSBase):
         """
             return the attribute names used to generate the swagger
         """
-        return ["id", "name", "my_custom_field"]
+        return {k:None for k in ["id", "name", "my_custom_field"]}
 
     @classproperty
     def _s_url(self):

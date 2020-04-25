@@ -12,6 +12,7 @@ class HiddenColumn(db.Column):
     """
         The "expose" attribute indicates that the column shouldn't be exposed
     """
+
     permissions = "w"
 
 
@@ -209,11 +210,13 @@ class Publisher(BaseModel):
     """
 
     __tablename__ = "Publishers"
+    allow_client_generated_ids = True
     id = db.Column(db.Integer, primary_key=True)  # Integer pk instead of str
     name = db.Column(db.String, default="")
     books = db.relationship("Book", back_populates="publisher", lazy="dynamic")
     #books = db.relationship("Book", back_populates="publisher")
     duplicate = duplicate
+    unexposed_books = db.relationship("UnexpBook", back_populates="publisher", lazy="dynamic")
 
     def __init__(self, *args, **kwargs):
         custom_field = kwargs.pop("custom_field", None)
@@ -246,6 +249,16 @@ class Review(BaseModel):
     review = db.Column(db.String, default="")
     created = db.Column(db.DateTime)
 
+class UnexpBook(db.Model):
+    """
+        description: Book description
+    """
+
+    __tablename__ = "UnexpBooks"
+    id = db.Column(db.Integer, primary_key=True, auto_increment=True)
+    name = db.Column(db.String, default="")
+    publisher_id = db.Column(db.Integer, db.ForeignKey("Publishers.id"))
+    publisher = db.relationship("Publisher", back_populates="unexposed_books")
 
 auth = HTTPBasicAuth()
 

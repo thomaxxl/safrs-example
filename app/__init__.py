@@ -3,6 +3,7 @@ import hashlib
 import sys
 
 import flask
+import safrs
 from flask import Flask
 from safrs import SAFRSAPI
 from flask_migrate import Migrate
@@ -18,7 +19,7 @@ def create_api(app, swagger_host=None, swagger_port=5000):
             "info": {"title": "New Title"},
             "securityDefinitions": {"ApiKeyAuth": {"type": "apiKey" , "in" : "header", "name": "My-ApiKey"}}
         }  # Customized swagger will be merged
-    api = SAFRSAPI(app, host=swagger_host, port=swagger_port, custom_swagger=custom_swagger)
+    api = SAFRSAPI(app, host=swagger_host, port=swagger_port, custom_swagger=custom_swagger, decorators=[safrs.test_decorator])
     api.expose_object(Thing)
     api.expose_object(ThingWType)
     api.expose_object(SubThing)
@@ -33,12 +34,14 @@ def create_api(app, swagger_host=None, swagger_port=5000):
         reader = Person(name="Reader " + str(i), email="reader_email" + str(i), password=secret)
         author = Person(name="Author " + str(i), email="author_email" + str(i))
         book = Book(title="book_title" + str(i))
+        unexp_book = Book(title="unexp_book_title" + str(i))
         review = Review(
             reader_id=reader.id, book_id=book.id, review="review " + str(i)
         )
         if i % 4 == 0:
             publisher = Publisher(name="name" + str(i))
         publisher.books.append(book)
+        publisher.books.append(unexp_book)
         reader.books_read.append(book)
         author.books_written.append(book)
         for obj in [reader, author, book, publisher, review]:

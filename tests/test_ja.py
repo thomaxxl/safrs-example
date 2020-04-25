@@ -164,6 +164,23 @@ def test_post_new_reader_person_invalid_type(client, db_session):
     res = client.post("/People", json={"data": data})
     assert res.status_code == 400
 
+def test_post_new_publisher(client, db_session):
+    # test allow_client_generated_ids
+    pub_name = "Test Publisher"
+    id = 12345
+    data = {
+            "attributes": {"name" : pub_name},
+        "type": "Publisher",
+        "id" : id
+    }
+
+    res = client.post("/Publishers", json={"data": data})
+    return
+    # todo
+    assert res.status_code == 201
+    new_pub = (db_session.query(models.Publisher).filter(models.Publisher.name == pub_name).first())
+    assert new_pub.id == id
+
 
 def test_post_invalid_datetime(client, db_session):
     """
@@ -317,6 +334,23 @@ def test_include(client):
     
     res = client.get(f"/People/{person_test_id}/?include=books_read")
     assert res.status_code == 200
+
+def test_include_recurse(client):
+    res = client.get(f"/People")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    person_test_id = response_data["data"][0]["id"]
+    
+    res = client.get(f"/People/?page[limit]=1&include=books_read.author")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    included = response_data["included"]
+    for inc in included:
+        print(inc["type"])
+        if inc["type"] == "Person":
+            included_author = inc
+            assert included_author["attributes"]["name"] == "Author 0"
+            break
 
 def test_hidden_column(client):
     res = client.get(f"/People")
