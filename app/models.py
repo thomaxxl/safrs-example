@@ -2,7 +2,7 @@ from safrs import jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response, 
 from safrs.api_methods import startswith, duplicate
 from sqlalchemy import func
 from app.base_model import db, BaseModel
-from safrs import SAFRSBase
+from safrs import SAFRSBase, jsonapi_attr
 from safrs.safrs_types import SafeString
 from flask_httpauth import HTTPBasicAuth
 import datetime
@@ -82,6 +82,14 @@ class Thing(BaseModel):
     def none(self):
         return {}
 
+    @jsonapi_attr
+    def some_attr(self):
+        """
+            default: 
+                - 200
+        """
+        return 100
+
 class SubThing(BaseModel):
     __tablename__ = "subthing"
 
@@ -96,7 +104,7 @@ class ThingWType(BaseModel):
     __tablename__ = "thing_with_type"
     db_commit = True
     id = db.Column(db.String, primary_key=True, server_default=func.uuid_generate_v1())
-    type= db.Column(db.String, nullable=False)
+    type= db.Column(db.String, nullable=False,default="type_str")
 
 
 class ThingWCommit(BaseModel):
@@ -129,6 +137,7 @@ class Book(BaseModel):
     reviews = db.relationship(
         "Review", backref="book", cascade="save-update, merge, delete, delete-orphan"
     )
+    published = db.Column(db.Time)
 
 
 class Person(BaseModel):

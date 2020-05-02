@@ -10,7 +10,6 @@ RUN apk add --no-cache \
     musl-dev \
     postgresql-dev \
     git \
-    postgis \
     && pip install --no-cache-dir -U pip \
     && pip install --no-cache-dir -r requirements.txt
 

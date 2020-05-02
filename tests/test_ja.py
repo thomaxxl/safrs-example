@@ -74,7 +74,8 @@ def test_get_instance(client, mock_thing):
 
 def test_Type(client, mock_thing):
     my_type = "test"
-    twt = models.ThingWType(type=my_type)
+    twt = models.ThingWType()
+    twt.type = my_type
    
     res = client.get(f"/thing_with_type")
     assert res.status_code == 200
@@ -202,16 +203,16 @@ def test_post_invalid_datetime(client, db_session):
     }
 
     res = client.post("/People", json={"data": data})
-    assert res.status_code == 500
+    assert res.status_code == 201
 
     reader_name = "Test Reader1"
     data = {
-        "attributes": {"name": reader_name, "created": "iii"},
+        "attributes": {"name": reader_name, "created": "dwi.iii"},
         "type": "Person",
     }
 
     res = client.post("/People", json={"data": data})
-    assert res.status_code == 500
+    assert res.status_code == 201
 
 
 def test_patch_reader_person(client, db_session, mock_person_with_3_books_read):
@@ -335,6 +336,24 @@ def test_include(client):
     res = client.get(f"/People/{person_test_id}/?include=books_read")
     assert res.status_code == 200
 
+def test_include_all(client):
+    res = client.get(f"/People")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    person_test_id = response_data["data"][0]["id"]
+    
+    res = client.get(f"/People/?include=%2Ball")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    included = response_data["included"]
+    assert len(included)
+    found_book = False
+    for inc in included:
+        if inc["type"] == "Book":
+            break
+    else:
+        assert False is True
+
 def test_include_recurse(client):
     res = client.get(f"/People")
     assert res.status_code == 200
@@ -346,11 +365,113 @@ def test_include_recurse(client):
     response_data = res.get_json()
     included = response_data["included"]
     for inc in included:
-        print(inc["type"])
         if inc["type"] == "Person":
             included_author = inc
             assert included_author["attributes"]["name"] == "Author 0"
             break
+
+def test_include_recurse_2(client):
+
+    res = client.get(f"/Publishers/?page[limit]=1&include=books.reader.reviews")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    included = response_data["included"]
+    for inc in included:
+        if inc["type"] == "Person":
+            included_reader = inc
+        if inc["type"] == "Review":
+            included_review = inc
+    assert included_review["attributes"]["reader_id"] == included_reader["id"]
+
+def test_include_recurse_3(client):
+
+    res = client.get(f"/Publishers/1/?include=books.reader.reviews")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    included = response_data["included"]
+    included_reader_ids = []
+    for inc in included:
+        if inc["type"] == "Person":
+            included_reader_ids.append(inc["id"])
+        if inc["type"] == "Review":
+            included_review = inc
+    assert included_review["attributes"]["reader_id"] in included_reader_ids
+
+def test_delete_publisher_books(client):
+
+    res = client.get(f"/Publishers/1/?include=books.reader.reviews")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    included = response_data["included"]
+    for inc in included:
+        if inc["type"] == "Book":
+            break
+    json = { "data" : [ { "type" : inc["type"], "id" : inc["id"] } ]}
+    res = client.delete(f"/Publishers/1/books", json=json)
+    assert res.status_code == 204
+    res = client.get(f"/Publishers/1/books")
+    response_data = res.get_json()
+    #assert response_data["data"] == []
+
+
+def test_delete_book_author(client):
+    res = client.get(f"/Books/?page[limit]=1")
+    assert res.status_code == 200
+    response_data = res.get_json()["data"]
+    book_id = response_data[0]["id"]
+    res = client.get(f"/Books/{book_id}/author")
+    response_data = res.get_json()
+    author = response_data["data"]
+    assert author["attributes"]["name"].startswith("Author")
+    author_id = author["id"]
+    author_type = author["type"]
+    json = { "data" : { "type" : author_type, "id" : author_id }}
+    res = client.delete(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 204
+    res = client.get(f"/Books/{book_id}/author")
+    response_data = res.get_json()
+    assert res.status_code == 404
+    json = { "data" : [{ "type" : author_type, "id" : author_id }]}
+    res = client.delete(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 204
+    json = { "data" : 1 }
+    res = client.delete(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 400
+
+    json = { "data" : {} }
+    res = client.delete(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 403
+    json = { "data" : {"id" : "sqd" , "type" : "qdsd" } }
+    res = client.delete(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 403
+
+def test_post_book_author(client):
+    res = client.get(f"/Books/?page[limit]=1")
+    assert res.status_code == 200
+    response_data = res.get_json()["data"]
+    book_id = response_data[0]["id"]
+    res = client.get(f"/Books/{book_id}/author")
+    response_data = res.get_json()
+    author = response_data["data"]
+    assert author["attributes"]["name"].startswith("Author")
+    author_id = author["id"]
+    author_type = author["type"]
+    json = { "data" : { "type" : author_type, "id" : author_id }}
+    res = client.delete(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 204
+    res = client.get(f"/Books/{book_id}/author")
+    response_data = res.get_json()
+    assert res.status_code == 404
+    json = { "data" : { "type" : author_type, "id" : author_id }}
+    res = client.post(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 204
+    res = client.get(f"/Books/{book_id}/author")
+    response_data = res.get_json()
+    author = response_data["data"]
+    assert author["attributes"]["name"].startswith("Author")
+    assert author["id"] == author_id
+    assert author["type"] == author_type
+
 
 def test_hidden_column(client):
     res = client.get(f"/People")
@@ -392,6 +513,56 @@ def test_hidden_column(client):
     assert getattr(db_person,"password") == "test"
 
 
+def post_book(client):
+    json = {
+      "data": {
+	"attributes": {
+	  "title": "",
+	  "reader_id": "",
+	  "author_id": "",
+	  "publisher_id": 0,
+	  "published": "00:00:00"
+	},
+	"type": "Book"
+      }
+    }
+    res = client.post(f"/Books", json=json)
+    assert res.status_code == 201
+    response_data = res.get_json()["data"]
+    assert response_data["attributes"]["published"] == "00:00:00"
+    # test date
+    json["data"]["attributes"]["published"] == "00:00:."
+    res = client.post(f"/Books", json=json)
+    assert res.status_code == 201
+    data = {} 
+    res = client.post(f"/Books", json=data)
+    assert res.status_code == 400
+    response_data = res.get_json()["errors"]
+    assert response_data
+
+def test_date(client):
+    json = {
+      "data": {
+	"attributes": {
+	  "name": "John Doe",
+	  "email": "",
+	  "comment": "my custom value",
+	  "dob": "2020-05-02",
+	  "password": "",
+	  "employer_id": 0
+	},
+	"type": "Person"
+      }
+    }
+    res = client.post(f"/People", json=json)
+    assert res.status_code == 201
+    json["data"]["attributes"]["dob"] = "qds"
+    res = client.post(f"/People", json=json)
+    assert res.status_code == 201
+    json["data"]["attributes"]["dob"] = "."
+    res = client.post(f"/People", json=json)
+    assert res.status_code == 201
+
 def test_duplicate(client):
     res = client.get(f"/Publishers")
     assert res.status_code == 200
@@ -411,6 +582,12 @@ def test_duplicate(client):
     dup_pub_test_id = dup_response_data["data"]["id"]
     assert dup_response_data["data"]["attributes"]["name"] == response_data["data"][0]["attributes"]["name"]
 
+
+def test_expunge(client, db_session):
+    publisher = db_session.query(models.Publisher).first()
+    pub_clone = publisher._s_clone() # todo: test
+    publisher._s_expunge()
+    assert db_session.query(models.Publisher).first().id != publisher
 
 import base64
 from werkzeug.datastructures import Headers
