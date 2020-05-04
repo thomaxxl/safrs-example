@@ -397,6 +397,21 @@ def test_include_recurse_3(client):
             included_review = inc
     assert included_review["attributes"]["reader_id"] in included_reader_ids
 
+def test_pagination(client):
+    # todo
+    res = client.get(f"/People/?page[offset]=-1&include=books_read.author")
+    assert res.status_code == 200
+    res = client.get(f"/People/?page[offset]=999999999999999999999999999999&include=books_read.author")
+    assert res.status_code == 200
+    res = client.get(f"/People/?page[offset]=xx&include=books_read.author")
+    assert res.status_code == 200
+    res = client.get(f"/People/?page[limit]=-1&include=books_read.author")
+    assert res.status_code == 200
+    res = client.get(f"/People/?page[limit]=999999999999999999999999999999&include=books_read.author")
+    assert res.status_code == 200
+    res = client.get(f"/People/?page[limit]=xx&include=books_read.author")
+    assert res.status_code == 200
+ 
 def test_delete_publisher_books(client):
 
     res = client.get(f"/Publishers/1/?include=books.reader.reviews")
