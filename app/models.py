@@ -298,3 +298,13 @@ class AuthUser(SAFRSBase, db.Model):
     id = db.Column(db.String, primary_key=True)
     username = db.Column(db.String)
     decorators = [post_login_required]
+
+
+class PKItem(SAFRSBase, db.Model):
+    __tablename__ = "pk_items"
+    id = db.Column(db.Integer, primary_key=True)
+    pk_A = db.Column(db.String(32), primary_key=True)
+    pk_B = db.Column(db.String(32), primary_key=True)
+
+    foo = db.Column(db.String(32))
+    bar = db.Column(db.String(32))

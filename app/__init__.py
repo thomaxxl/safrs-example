@@ -7,7 +7,7 @@ import safrs
 from flask import Flask
 from safrs import SAFRSAPI
 from flask_migrate import Migrate
-from app.models import db, Thing, SubThing, Person, Book, Review, Publisher,ThingWOCommit, ThingWCommit, ThingWType, AuthUser
+from app.models import db, Thing, SubThing, Person, Book, Review, Publisher,ThingWOCommit, ThingWCommit, ThingWType, AuthUser, PKItem
 from app.models_stateless import Test
 #from app.models import db, Thing, SubThing
 
@@ -29,7 +29,7 @@ def create_api(app, swagger_host=None, swagger_port=5000):
     api.expose_object(AuthUser)
 
 
-    for i in range(30):
+    for i in range(10):
         secret = hashlib.sha256(bytes(i)).hexdigest()
         reader = Person(name="Reader " + str(i), email="reader_email" + str(i), password=secret)
         author = Person(name="Author " + str(i), email="author_email" + str(i))
@@ -46,10 +46,11 @@ def create_api(app, swagger_host=None, swagger_port=5000):
         author.books_written.append(book)
         for obj in [reader, author, book, publisher, review]:
             db.session.add(obj)
-
+        for i in range(20):
+            item = PKItem(foo="item_" + str(i), bar="group_" + str((int)(i / 10)), pk_A=str(i), pk_B=str(i),id=8)
         db.session.commit()
 
-    for model in [Person, Book, Review, Publisher]:
+    for model in [Person, Book, Review, Publisher, PKItem]:
         # Create an API endpoint
         api.expose_object(model)
 

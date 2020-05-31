@@ -3,7 +3,7 @@
 import pytest
 from app import models, models_stateless
 from tests.factories import BookFactory
-
+from safrs.errors import ValidationError, NotFoundError
 
 def test_thing_get_fields(client, mock_thing):
     """
@@ -57,19 +57,30 @@ def test_get_instance(client, mock_thing):
 
     try:
         models.Thing.get_instance(item = {"type": mock_thing._s_type})
-    except:
+    except ValidationError:
         pass
 
     try:
         models.Thing.get_instance(item = {"id": mock_thing.id})
-    except:
+    except ValidationError:
         pass
 
     try:
-        models.Thing.get_instance(id="n/a")
-    except:
+        models.Thing.get_instance("n/a")
+    except NotFoundError:
         pass
 
+    t1 = models.Thing.query.first()
+    assert t1
+    t2 = models.Thing.get_instance(t1.id)
+    assert t1 is t2
+
+def test_get_pk_items(client, mock_thing):
+    res = client.get(f"/pk_items")
+    assert res.status_code == 200
+    first_id = res.json["data"][0]["id"]
+    res = client.get(f"/pk_items/{first_id}")
+    assert res.status_code == 200
 
 
 def test_Type(client, mock_thing):
