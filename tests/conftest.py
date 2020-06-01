@@ -112,6 +112,16 @@ def mock_publisher_with_3_books(db_session):
 
     yield publisher
 
+@pytest.fixture(scope="function")
+def mock_publisher_lazy_with_3_books(db_session):
+    publisher = PublisherFactory.create(name="mock_publisher_lazy_with_3_books")
+
+    book1 = BookFactory(publisher=publisher)
+    book2 = BookFactory(publisher=publisher)
+    book3 = BookFactory(publisher=publisher)
+
+    yield publisher
+
 
 @pytest.fixture(scope="function")
 def mock_person_with_3_books_read(db_session):

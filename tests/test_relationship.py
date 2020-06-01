@@ -27,14 +27,18 @@ def test_patch_parent_thing_of_subthing(client, db_session, mock_subthing, mock_
 
 
 def test_get_publishers_books_list(client, mock_publisher_with_3_books):
-    res = client.get(f"/Publishers/{mock_publisher_with_3_books.id}/books")
+    res = client.get(f"/Publishers/{mock_publisher_with_3_books.id}/books?sort=id")
     assert res.status_code == 200
 
     response_data = res.get_json()
     assert len(response_data["data"]) == 3
-    assert mock_publisher_with_3_books.books[0].id == response_data["data"][0]["id"]
-    assert mock_publisher_with_3_books.books[1].id == response_data["data"][1]["id"]
-    assert mock_publisher_with_3_books.books[2].id == response_data["data"][2]["id"]
+    ids = []
+    for book in response_data["data"]:
+        ids.append(book["id"])
+    assert mock_publisher_with_3_books.books[0].id in ids
+    assert mock_publisher_with_3_books.books[1].id in ids
+    assert mock_publisher_with_3_books.books[2].id in ids
+    assert ids == sorted(ids)
 
 
 def test_patch_publishers_books_list_to_empty_list(client, db_session, mock_publisher_with_3_books):

@@ -226,6 +226,7 @@ class Publisher(BaseModel):
     #books = db.relationship("Book", back_populates="publisher")
     duplicate = duplicate
     unexposed_books = db.relationship("UnexpBook", back_populates="publisher", lazy="dynamic")
+    data = db.Column(db.JSON, default = {1:1})
 
     def __init__(self, *args, **kwargs):
         custom_field = kwargs.pop("custom_field", None)
