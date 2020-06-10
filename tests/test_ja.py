@@ -347,6 +347,16 @@ def test_include(client):
     res = client.get(f"/People/{person_test_id}/?include=books_read")
     assert res.status_code == 200
 
+def test_include_invalid(client):
+    res = client.get(f"/People")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    person_test_id = response_data["data"][0]["id"]
+    
+    res = client.get(f"/People/{person_test_id}/?include=invalid_rel")
+    assert res.status_code == 400
+
+
 def test_include_all(client):
     res = client.get(f"/People")
     assert res.status_code == 200
