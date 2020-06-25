@@ -234,7 +234,7 @@ def test_patch_reader_person(client, db_session, mock_person_with_3_books_read):
     }
 
     res = client.patch(f"/People/{mock_person_with_3_books_read.id}", json={"data": data})
-    assert res.status_code == 201
+    assert res.status_code == 200
 
     person = (
         db_session.query(models.Person).filter(models.Person.id == mock_person_with_3_books_read.id).one_or_none()

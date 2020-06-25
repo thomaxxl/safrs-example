@@ -104,7 +104,7 @@ def test_patch_thing(client, mock_thing, db_session):
 
 
     res = client.patch(f"/thing/{mock_thing.id}", json={"data": patch_data})
-    assert res.status_code == 201
+    assert res.status_code == 200
 
     result = res.get_json()
     assert result["data"]["id"] == mock_thing.id
@@ -136,7 +136,7 @@ def test_patch_things(client, mock_thing, db_session):
 
 
     res = client.patch(f"/thing/", json={"data": [patch_data]})
-    assert res.status_code == 201
+    assert res.status_code == 200
 
     result = res.get_json()
     assert result == {}
