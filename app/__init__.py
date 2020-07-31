@@ -7,7 +7,7 @@ import safrs
 from flask import Flask
 from safrs import SAFRSAPI
 from flask_migrate import Migrate
-from app.models import db, Thing, SubThing, Person, Book, Review, Publisher,ThingWOCommit, ThingWCommit, ThingWType, AuthUser, PKItem
+from app.models import db, Thing, SubThing, Person, Book, Review, Publisher,ThingWOCommit, ThingWCommit, ThingWType, AuthUser, PKItem, UserWithJsonapiAttr
 from app.models_stateless import Test
 #from app.models import db, Thing, SubThing
 
@@ -50,7 +50,7 @@ def create_api(app, swagger_host=None, swagger_port=5000):
             item = PKItem(foo="item_" + str(i), bar="group_" + str((int)(i / 10)), pk_A=str(i), pk_B=str(i),id=8)
         db.session.commit()
 
-    for model in [Person, Book, Review, Publisher, PKItem]:
+    for model in [Person, Book, Review, Publisher, PKItem, UserWithJsonapiAttr]:
         # Create an API endpoint
         api.expose_object(model)
 

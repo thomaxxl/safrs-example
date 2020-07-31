@@ -23,7 +23,7 @@ def test_validate_swagger(client):
     res = client.get(f"/swagger.json")
     assert res.status_code == 200
     swagger_ = res.get_json()
-
+    # todo: validate swagger
 
 def test_db_settings(client, mock_thing):
     res = client.get(f"/thing/{mock_thing.id}") 
@@ -305,7 +305,7 @@ def test_filter(client):
     assert res.status_code == 200
 
     response_data = res.get_json()
-    assert response_data["data"][0] is not None
+    assert response_data["data"] == []
 
     res = client.get(f"/thing/?filter=xx")
     assert res.status_code == 200
@@ -509,6 +509,43 @@ def test_post_book_author(client):
     assert author["type"] == author_type
 
 
+def test_patch_book_author(client):
+    res = client.get(f"/Books/?page[limit]=1")
+    assert res.status_code == 200
+    response_data = res.get_json()["data"]
+    book_id = response_data[0]["id"]
+    json = { "data" : None }
+    res = client.patch(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 204 # no content
+    res = client.get(f"/Books/{book_id}/author")
+    assert res.status_code == 404
+    json = { "data" : "xx" } # invalid
+    res = client.patch(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 400 # no content
+    
+
+def test_patch_books_read(client):
+    res = client.get(f"/Books/?page[limit]=10")
+    assert res.status_code == 200
+    response_data = res.get_json()["data"]
+    assert len(response_data) == 10
+    books = [ {"id": b["id"], "type": b["type"]} for b in response_data]
+    json = { "data" : books }
+    res = client.get(f"/People/?page[limit]=1")
+    reader_id = res.get_json()["data"][0]["id"]
+    res = client.patch(f"/People/{reader_id}/books_read",json = json)
+    assert res.status_code == 200
+    response_data = res.get_json()["data"]
+    assert len(response_data) == 10
+    json = { "data" : books[4] } # invalid: must be a list
+    res = client.patch(f"/People/{reader_id}/books_read",json = json)
+    assert res.status_code == 400 # -> GenericError / BAD_REQUEST
+    json = { "data" : books[:4] }
+    res = client.patch(f"/People/{reader_id}/books_read",json = json)
+    assert res.status_code == 200
+    response_data = res.get_json()["data"]
+    assert len(response_data) == 4
+
 def test_hidden_column(client):
     res = client.get(f"/People")
     assert res.status_code == 200
@@ -662,3 +699,18 @@ def test_auth_user(client, mock_thing):
     assert res.status_code == 204
 
     assert len(models.AuthUser.query.all()) == 0
+
+def test_jsonapi_attr(client):
+	test_name = "test"
+	data = { 
+			"attributes" : { "some_attr": test_name },
+		    "type": "UserWithJsonapiAttr" }
+
+	client.post("/UsersWithJsonapiAttr", json={"data": data})
+
+	res = client.get("/UsersWithJsonapiAttr")
+
+	assert res.status_code == 200
+	response_data = res.get_json()["data"]
+	assert response_data[0]["attributes"]["some_attr"] == "some_value"
+	#assert response_data[0]["attributes"]["name"] == test_name

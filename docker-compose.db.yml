@@ -8,6 +8,8 @@ services:
     restart: always
     networks:
       - develop
+    environment:
+        POSTGRES_PASSWORD: password
   mysql:
     image: mysql:8.0
     container_name: mysql

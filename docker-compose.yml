@@ -10,7 +10,7 @@ services:
       DB_HOST: psql
       DB_NAME: safrs
       DB_USER: postgres
-      DB_PWD: postgres
+      DB_PWD: password
       PYTHONPATH: "${PYTHONPATH}:/app/safrs:/app/src/safrs"
       SWAGGER_HOST: 192.168.235.136
       SWAGGER_PORT: 1237

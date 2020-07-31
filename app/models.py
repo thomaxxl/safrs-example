@@ -36,7 +36,8 @@ class Thing(BaseModel):
 
     id = db.Column(db.String, primary_key=True, server_default=func.uuid_generate_v1())
     name = db.Column(db.String)
-    description = db.Column(SafeString)
+    #description = db.Column("a_description", SafeString)
+    description = db.Column("description", SafeString)
     created = db.Column(db.DateTime)
     documented_column = DocumentedColumn(db.String)
 
@@ -92,7 +93,7 @@ class Thing(BaseModel):
 
 class SubThing(BaseModel):
     __tablename__ = "subthing"
-
+    _s_auto_commit = True
     id = db.Column(db.String, primary_key=True, server_default=func.uuid_generate_v1())
     name = db.Column(db.String, nullable=False)
 
@@ -306,6 +307,26 @@ class PKItem(SAFRSBase, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     pk_A = db.Column(db.String(32), primary_key=True)
     pk_B = db.Column(db.String(32), primary_key=True)
+    #pk_B = db.Column(db.String(32))
 
     foo = db.Column(db.String(32))
     bar = db.Column(db.String(32))
+
+class UserWithJsonapiAttr(SAFRSBase, db.Model):
+    """
+        description: User description
+    """
+
+    __tablename__ = "UsersWithJsonapiAttr"
+    id = db.Column(db.String, primary_key=True)
+    name = db.Column(db.String)
+    email = db.Column(db.String)
+    
+    @jsonapi_attr
+    def some_attr(self):
+        return 'some_value'
+    
+    @some_attr.setter
+    def some_attr(self, val):
+        print("some_attr setter value:", val)
+        self.name = val
