@@ -138,7 +138,7 @@ class Test(SAFRSBase):
         """
             return the included relationships
         """
-        return [cls.books]
+        return {"books": cls.books}
 
     @property
     def _s_jsonapi_attrs(self):

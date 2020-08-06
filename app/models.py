@@ -37,7 +37,7 @@ class Thing(BaseModel):
     id = db.Column(db.String, primary_key=True, server_default=func.uuid_generate_v1())
     name = db.Column(db.String)
     #description = db.Column("a_description", SafeString)
-    description = db.Column("description", SafeString)
+    description = db.Column("description", db.String)
     created = db.Column(db.DateTime)
     documented_column = DocumentedColumn(db.String)
 
@@ -266,7 +266,8 @@ class UnexpBook(db.Model):
     """
 
     __tablename__ = "UnexpBooks"
-    id = db.Column(db.Integer, primary_key=True, auto_increment=True)
+    #id = db.Column(db.Integer, primary_key=True, auto_increment=True)
+    id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String, default="")
     publisher_id = db.Column(db.Integer, db.ForeignKey("Publishers.id"))
     publisher = db.relationship("Publisher", back_populates="unexposed_books")
@@ -330,3 +331,20 @@ class UserWithJsonapiAttr(SAFRSBase, db.Model):
     def some_attr(self, val):
         print("some_attr setter value:", val)
         self.name = val
+
+from sqlalchemy.ext.hybrid import hybrid_method
+class UserWithPerms(SAFRSBase, db.Model):
+    """
+        description: User description
+    """
+
+    __tablename__ = "UsersWithPerms"
+    id = db.Column(db.String, primary_key=True)
+    name = db.Column(db.String)
+    email = db.Column(db.String)
+
+    @hybrid_method
+    def _s_check_perm(self, property_name, permission="r"):
+        if property_name == "email":
+            return False
+

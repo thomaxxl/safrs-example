@@ -3,7 +3,7 @@
 # Migrate database
 flask db migrate
 flask db upgrade
-python3 -m pip install querystring-parser==1.2.4
+
 
 if [ $FLASK_ENV = "development" ]; then
     ## Skip the workers when in develop mode
