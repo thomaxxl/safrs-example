@@ -97,7 +97,7 @@ class TestBookRelationship:
 
 class Test(SAFRSBase):
     """
-        description: Book description
+        description: Stateless Class
     """
 
     id = 1

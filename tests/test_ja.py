@@ -299,7 +299,7 @@ def test_get_read_book_from_reader_person_by_id(client, mock_person_with_3_books
 
 def test_filter(client):
     res = client.get(f"/People/?filter=xx")
-    assert res.status_code == 200
+    assert res.status_code == 400
 
     res = client.get(f"/People/?filter[invalid]=xx")
     assert res.status_code == 200
@@ -311,6 +311,20 @@ def test_filter(client):
     assert res.status_code == 200
     response_data = res.get_json()
 
+    name = "Reader 0"
+    filter = f'{{"name":"name","op":"eq","val":"{name}"}}'
+    res = client.get(f"/People/?filter={filter}")
+    assert res.status_code == 200
+    response_data = res.get_json()
+    assert response_data["data"]
+    assert len(response_data["data"])
+    assert response_data["data"][0]["attributes"]["name"] == name
+
+    res = client.get('/People/?filter={"name":"name","op":"INVALID","val":""}')
+    assert res.status_code == 400
+
+    res = client.get('/People/?filter={"name":"INVALID","op":"eq","val":""}')
+    assert res.status_code == 400
 
 def test_sort(client):
     res = client.get(f"/People/?sort=xx")

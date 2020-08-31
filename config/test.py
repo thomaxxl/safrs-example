@@ -3,7 +3,8 @@
 
 import sys, os
 sys.path.append(os.path.dirname(__file__))
-from base import *
+print(sys.path)
+from config.base import *
 
 DEBUG = True
 TESTING = True
