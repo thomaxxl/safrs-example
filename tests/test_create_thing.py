@@ -56,7 +56,8 @@ def test_create_things(client, mock_thing, db_session):
     assert res.status_code == 201
 
     result = res.get_json()
-    assert result == {}
+    assert isinstance(result, dict)
+    assert len(result["data"]) == len(data)
     """assert result["data"]["attributes"]["name"] == name
     assert result["data"]["attributes"]["description"] == desc
     assert result["data"]["attributes"]["created"] == created"""

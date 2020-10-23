@@ -63,13 +63,6 @@ class Thing(BaseModel):
 
     @jsonapi_rpc(http_methods=["POST", "GET"])
     def send_thing(self, email):
-        """
-        description : Send Thing to email
-        args:
-            email:
-                type : string
-                example : email@example.com
-        """
         content = "Hello {}, here is your thing: {}\n".format(email, email)
         return {"result": "sent: {}".format(content)}
 

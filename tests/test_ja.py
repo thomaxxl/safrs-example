@@ -496,6 +496,7 @@ def test_delete_book_author(client):
     assert res.status_code == 403
 
 def test_post_book_author(client):
+    # test a toone relationship
     res = client.get(f"/Books/?page[limit]=1")
     assert res.status_code == 200
     response_data = res.get_json()["data"]
@@ -507,6 +508,8 @@ def test_post_book_author(client):
     author_id = author["id"]
     author_type = author["type"]
     json = { "data" : { "type" : author_type, "id" : author_id }}
+    # deprecated: jsoanpi uses PATCH { data : null } to delete
+    # see: https://jsonapi.org/format/1.1/#crud-updating-to-one-relationships
     res = client.delete(f"/Books/{book_id}/author", json=json)
     assert res.status_code == 204
     res = client.get(f"/Books/{book_id}/author")
@@ -514,7 +517,9 @@ def test_post_book_author(client):
     assert res.status_code == 404
     json = { "data" : { "type" : author_type, "id" : author_id }}
     res = client.post(f"/Books/{book_id}/author", json=json)
-    assert res.status_code == 204
+    response_data = res.get_json()["data"]
+    assert response_data["id"] == author_id
+    assert res.status_code == 200
     res = client.get(f"/Books/{book_id}/author")
     response_data = res.get_json()
     author = response_data["data"]
@@ -522,6 +527,14 @@ def test_post_book_author(client):
     assert author["id"] == author_id
     assert author["type"] == author_type
 
+    # delete it again, now with patch:
+    json = { "data" : None }
+    res = client.patch(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 204
+    res = client.get(f"/Books/{book_id}/author")
+    response_data = res.get_json()
+    assert res.status_code == 404
+ 
 
 def test_patch_book_author(client):
     res = client.get(f"/Books/?page[limit]=1")

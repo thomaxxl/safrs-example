@@ -10,8 +10,11 @@ RUN apk add --no-cache \
     musl-dev \
     postgresql-dev \
     git \
-    && pip install --no-cache-dir -U pip \
-    && pip install --no-cache-dir -r requirements.txt
+    && ln -sf  /usr/local/bin/python3.8  /usr/bin/python \
+    && ln -sf  /usr/local/bin/python3.8  /usr/local/bin/python3 \
+    && python3 -m ensurepip \
+    && python3 -m pip install --no-cache-dir -U pip \
+    && python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Use CMD instead of ENTRYPOINT to allow easier run of other commands (like "sh")
 # Also Pycharm can only handle CMD overrides
