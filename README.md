@@ -1,6 +1,7 @@
 ## Overview
 
 Docker image with tests and examples, created by [wicol](https://github.com/wicol)
+Live Demo: https://safrs.hardened.be/
 
 ## Test/example repo for SAFRS
 
@@ -11,7 +12,9 @@ then `./run.sh <task> [<args>]`.
 `./run.sh db up -d`
 
 Create a database and use the uuid extension:
-Launch a psql shell - manually or with `./run.sh db_shell`.
+Launch a psql shell - manually or with 
+
+```./run.sh db_shell```
 
 ```
 CREATE DATABASE safrs;

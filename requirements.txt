@@ -9,3 +9,4 @@ pyrsistent
 flask_httpauth
 requests
 flask_cors
+safrs
