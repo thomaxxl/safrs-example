@@ -19,6 +19,7 @@ class BookFactory(BaseFactory):
         model = models.Book
 
     name = factory.Sequence(lambda n: "Book  %s" % n)
+    id = factory.Sequence(lambda n:n)
 
 
 class PersonFactory(BaseFactory):

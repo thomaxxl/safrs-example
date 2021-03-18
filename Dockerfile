@@ -9,6 +9,7 @@ RUN apk add --no-cache \
     python3-dev \
     musl-dev \
     postgresql-dev \
+    g++ \
     git \
     && ln -sf  /usr/local/bin/python3.8  /usr/bin/python \
     && ln -sf  /usr/local/bin/python3.8  /usr/local/bin/python3 \

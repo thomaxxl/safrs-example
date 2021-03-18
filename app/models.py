@@ -120,7 +120,7 @@ class Book(BaseModel):
     """
         description: Book description
     """
-
+    _s_allow_add_rels = True
     __tablename__ = "Books"
     id = db.Column(db.String, primary_key=True)
     title = db.Column(db.String, default="")

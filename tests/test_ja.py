@@ -226,6 +226,43 @@ def test_post_invalid_datetime(client, db_session):
     assert res.status_code == 201
 
 
+def test_post_with_relationship(client, db_session):
+
+    reader_name = "my reader"
+    data = {
+        "attributes": {
+            "title": "test"
+        },
+        "relationships": {
+          "reader": {
+            "data": {
+              "id": None,
+              "type": "Person",
+              "attributes": {
+                "name": reader_name
+              }
+            }
+          }
+        },
+        "type": "Book"
+      }
+    res = client.post("/Books", json={"data": data}) 
+    assert res.status_code == 201
+
+    response_data = res.get_json()
+    book_id = response_data["data"]["id"]
+    assert book_id
+    new_reader = (
+        db_session.query(models.Person).filter(models.Person.name == reader_name).one_or_none()
+    )
+    assert new_reader
+    included = response_data["included"]
+    assert included
+    assert new_reader.id == included[0]["id"]
+    assert new_reader.books_read[0].id == book_id
+    
+
+
 def test_patch_reader_person(client, db_session, mock_person_with_3_books_read):
     data = {
         "attributes": {"name": "Reader 0 Changed Name", "email": "reader_email0", "dob": "1988-08-09", "comment": ""},
@@ -297,7 +334,7 @@ def test_get_read_book_from_reader_person_by_id(client, mock_person_with_3_books
     assert response_data["data"]["id"] == newly_read_book.id
 
 
-def test_filter(client):
+def test_filter(client,  db_session):
     res = client.get(f"/People/?filter=xx")
     assert res.status_code == 400
 
@@ -319,6 +356,12 @@ def test_filter(client):
     assert response_data["data"]
     assert len(response_data["data"])
     assert response_data["data"][0]["attributes"]["name"] == name
+
+    #res = client.get('/People/?filter=[{"name":"id","op":"in","val":[1,2]}]')
+    res = client.get('/People/?filter=[{"name":"name","op":"ilike","val":"author%"}]')
+    assert res.status_code == 200
+    #print(response_data["data"])
+    #assert len(response_data["data"]) == db_session.query(models.Person.name.ilike("author%")).count()
 
     res = client.get('/People/?filter={"name":"name","op":"INVALID","val":""}')
     assert res.status_code == 400
