@@ -46,19 +46,26 @@ def database(app):
     create_database(app.config["DB_NAME"])
     db.create_all()
 
-
+_connection_fixture_connection = None
 @pytest.fixture(scope="session")
 def connection(database):
     # Create a connection
+    global _connection_fixture_connection
     connection = db.engine.connect()
+    _connection_fixture_connection = connection
     yield connection
     connection.close()
 
 
 @pytest.fixture(autouse=True)
-def db_session(connection):
+def db_session(connection,scope="session"):
+    if _connection_fixture_connection and _connection_fixture_connection.in_transaction():
+        # not needed when connection scope="function"
+        transaction = _connection_fixture_connection.get_transaction()
+        transaction.rollback()
     # Start a transaction
     transaction = connection.begin()
+
     # Start a scoped session (i.e it'll be closed after current application context)
     session = db.create_scoped_session(options={"bind": connection, "binds": {}})
 

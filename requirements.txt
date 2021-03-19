@@ -10,4 +10,4 @@ flask_httpauth
 requests
 flask_cors
 safrs
-SQLAlchemy==1.3.0
+SQLAlchemy==1.4.1
