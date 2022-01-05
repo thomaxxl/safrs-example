@@ -122,7 +122,6 @@ def test_delete_no_type_fails(client, db_session, mock_person_with_3_books_read)
 
     assert len(person_books_read_list) == 3
 
-
 def test_delete(client, db_session, mock_person_with_3_books_read):
     json = {
         "data": [
@@ -438,7 +437,7 @@ def test_include_recurse(client):
     response_data = res.get_json()
     person_test_id = response_data["data"][0]["id"]
     
-    res = client.get(f"/People/?page[limit]=1&include=books_read.author")
+    res = client.get(f"/People/?page[limit]=1&include=books_read.author&sort=name")
     assert res.status_code == 200
     response_data = res.get_json()
     included = response_data["included"]
@@ -508,7 +507,7 @@ def test_delete_publisher_books(client):
 
 
 def test_delete_book_author(client):
-    res = client.get(f"/Books/?page[limit]=1")
+    res = client.get(f"/Books/?page[limit]=1&sort=title")
     assert res.status_code == 200
     response_data = res.get_json()["data"]
     book_id = response_data[0]["id"]
@@ -540,7 +539,7 @@ def test_delete_book_author(client):
 
 def test_post_book_author(client):
     # test a toone relationship
-    res = client.get(f"/Books/?page[limit]=1")
+    res = client.get(f"/Books/?page[limit]=1&sort=title")
     assert res.status_code == 200
     response_data = res.get_json()["data"]
     book_id = response_data[0]["id"]

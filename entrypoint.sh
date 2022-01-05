@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 
 # Migrate database
+export PYTHONPATH=:/app/safrs:/app/src/safrs:${PYTHONPATH}
 flask db migrate
 flask db upgrade
 
