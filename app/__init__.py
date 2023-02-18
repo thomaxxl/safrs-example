@@ -19,7 +19,7 @@ def create_api(app, swagger_host=None, swagger_port=5000):
             "info": {"title": "New Title"},
             "securityDefinitions": {"ApiKeyAuth": {"type": "apiKey" , "in" : "header", "name": "My-ApiKey"}}
         }  # Customized swagger will be merged
-    api = SAFRSAPI(app, host=swagger_host, port=swagger_port, custom_swagger=custom_swagger, decorators=[safrs.test_decorator])
+    api = SAFRSAPI(app, app_db=db, host=swagger_host, port=swagger_port, custom_swagger=custom_swagger, decorators=[safrs.test_decorator])
     api.expose_object(Thing)
     api.expose_object(ThingWType)
     api.expose_object(SubThing)
@@ -69,7 +69,9 @@ def create_app():
 
 
 def run_app():
+    safrs.DB = db
     app = create_app()
+    safrs.DB = app.db = db
     with app.app_context():
         create_api(app, app.config["SWAGGER_HOST"], app.config["SWAGGER_PORT"])
     return app

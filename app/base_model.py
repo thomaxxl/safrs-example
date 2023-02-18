@@ -1,6 +1,11 @@
 import safrs
+from flask_sqlalchemy import SQLAlchemy
+from safrs import SAFRSBase, SAFRSAPI
+from safrs.util import classproperty
 
-db = safrs.DB
+safrs.DB = db = SQLAlchemy()
+
+#db = safrs.DB
 
 
 class BaseModel(safrs.SAFRSBase, db.Model):
