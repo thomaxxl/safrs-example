@@ -67,7 +67,11 @@ def db_session(connection,scope="session"):
     transaction = connection.begin()
 
     # Start a scoped session (i.e it'll be closed after current application context)
-    session = db.create_scoped_session(options={"bind": connection, "binds": {}})
+    from sqlalchemy.orm import scoped_session
+    from sqlalchemy.orm import sessionmaker
+    session_factory = sessionmaker(bind=connection)
+    session = scoped_session(session_factory)
+    #session = db.create_scoped_session(options={"bind": connection, "binds": {}})
 
     # Put our session on the db object for the codebase to use
     db.session = session

@@ -226,10 +226,11 @@ def test_get_collection_filter_by_name_for_partial_match_returs_no_results(clien
     ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
 
     name = "mock_"
-    res = client.get(f"/thing/?filter[name]={name}")
+    res = client.get(f"/thing/?filter[name]={mock_thing.name}")
     assert res.status_code == 200
 
     result = res.get_json()
+    # todo: check
     assert result["meta"]["count"] == 3
 
 

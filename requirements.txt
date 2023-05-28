@@ -1,13 +1,13 @@
 -e git+https://github.com/thomaxxl/safrs.git#egg=safrs
-Flask-Migrate==2.5.2
-psycopg2==2.8.2
-gunicorn==19.9.0
-pytest==4.6.3
-factory-boy==2.12.0
+Flask-Migrate
+psycopg2_binary
+gunicorn
+pytest
+factory-boy
 pytest-cov
 pyrsistent
 flask_httpauth
 requests
 flask_cors
 safrs
-SQLAlchemy==1.4.1
+SQLAlchemy
