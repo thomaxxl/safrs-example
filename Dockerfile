@@ -1,4 +1,4 @@
-FROM python:3.7-alpine
+FROM python:3.12-alpine
 WORKDIR /app
 ENV PYTHONPATH /app
 COPY . .
@@ -11,8 +11,8 @@ RUN apk add --no-cache \
     postgresql-dev \
     g++ \
     git \
-    && ln -sf  /usr/local/bin/python3.8  /usr/bin/python \
-    && ln -sf  /usr/local/bin/python3.8  /usr/local/bin/python3 \
+    && ln -sf  /usr/local/bin/python3.12  /usr/bin/python \
+    && ln -sf  /usr/local/bin/python3.12  /usr/local/bin/python3 \
     && python3 -m ensurepip \
     && python3 -m pip install --no-cache-dir -U pip \
     && python3 -m pip install --no-cache-dir -r requirements.txt

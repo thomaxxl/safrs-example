@@ -18,7 +18,7 @@ services:
     ports:
       - 1237:80
     volumes:
-      - .:/app
+      - $PWD:/app
     restart: always
     networks:
       - develop
