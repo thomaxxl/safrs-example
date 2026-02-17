@@ -560,3 +560,263 @@ def test_fastapi_relationship_handler_branch_errors(fastapi_client: TestClient) 
         api._delete_relationship(FastAuthor, "books")(1, {"data": "bad"})
     with pytest.raises(JSONAPIHTTPError):
         api._delete_relationship(FastBook, "author")(1, {"data": [1]})
+
+
+def test_fastapi_rpc_and_encoding_internal_branches(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+
+    class _RpcDiscoveryModel:
+        @classmethod
+        def _s_get_jsonapi_rpc_methods(cls) -> list[Any]:
+            return [cls.class_method, cls.class_method, cls.static_method]
+
+        @classmethod
+        def class_method(cls) -> None:
+            return None
+
+        @staticmethod
+        def static_method() -> None:
+            return None
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("safrs.fastapi.api.get_http_methods", lambda _method: ["get"])
+    try:
+        discovered = api._discover_rpc_methods(_RpcDiscoveryModel)
+    finally:
+        monkeypatch.undo()
+    assert discovered == [
+        ("class_method", True, ["GET"]),
+        ("static_method", True, ["GET"]),
+    ]
+
+    parsed_args = api._parse_rpc_args(_request("x=query&y=2"), {"meta": {"args": {"x": "meta"}}})
+    assert parsed_args["x"] == "meta"
+    assert parsed_args["y"] == "2"
+
+    assert api._encode_rpc_value(None) is None
+    assert api._encode_rpc_value({"type": "FastThing", "id": "1"}) == {"type": "FastThing", "id": "1"}
+    assert api._encode_rpc_value({"outer": {"inner": 1}}) == {"outer": {"inner": 1}}
+    assert api._encode_rpc_value([1, 2]) == [1, 2]
+    assert api._encode_rpc_value(123) == 123
+
+    link_payload = {"data": {"type": "FastThing", "id": "1"}, "links": {"self": "/x"}}
+    norm = api._normalize_rpc_result(FastThing, link_payload)
+    assert norm["links"]["self"] == "/x"
+
+    assert api._normalize_rpc_result(FastThing, {"raw": 1})["meta"]["result"] == {"raw": 1}
+    thing_obj = safrs.DB.session.query(FastThing).first()
+    encoded_obj = api._normalize_rpc_result(FastThing, thing_obj)
+    assert encoded_obj["data"]["type"] == "FastThing"
+    encoded_list = api._normalize_rpc_result(FastThing, [thing_obj])
+    assert isinstance(encoded_list["data"], list)
+    assert api._normalize_rpc_result(FastThing, None)["meta"] == {}
+    assert api._normalize_rpc_result(FastThing, 7)["meta"]["result"] == 7
+
+
+def test_fastapi_rpc_handler_exception_branches(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+
+    class ClassRPCModel:
+        @classmethod
+        def raise_jsonapi(cls, **_kwargs: Any) -> Any:
+            raise JSONAPIHTTPError(409, {"errors": []})
+
+        @classmethod
+        def raise_runtime(cls, **_kwargs: Any) -> Any:
+            raise RuntimeError("class rpc boom")
+
+    class InstanceRPCModel:
+        @staticmethod
+        def get_instance(_object_id: str) -> Any:
+            class Instance:
+                @staticmethod
+                def raise_jsonapi(**_kwargs: Any) -> Any:
+                    raise JSONAPIHTTPError(410, {"errors": []})
+
+                @staticmethod
+                def raise_runtime(**_kwargs: Any) -> Any:
+                    raise RuntimeError("instance rpc boom")
+
+            return Instance()
+
+    class_handler_jsonapi = api._rpc_handler(ClassRPCModel, "raise_jsonapi", True)
+    with pytest.raises(JSONAPIHTTPError):
+        class_handler_jsonapi(_request(""), None)
+
+    class_handler_runtime = api._rpc_handler(ClassRPCModel, "raise_runtime", True)
+    with pytest.raises(RuntimeError):
+        class_handler_runtime(_request(""), None)
+
+    instance_handler_jsonapi = api._rpc_handler(InstanceRPCModel, "raise_jsonapi", False)
+    with pytest.raises(JSONAPIHTTPError):
+        instance_handler_jsonapi("1", _request(""), None)
+
+    instance_handler_runtime = api._rpc_handler(InstanceRPCModel, "raise_runtime", False)
+    with pytest.raises(RuntimeError):
+        instance_handler_runtime("1", _request(""), None)
+
+
+def test_fastapi_internal_parse_and_instance_error_branches(monkeypatch: pytest.MonkeyPatch, fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._require_type(FastThing, {"data": "not-a-dict"})  # type: ignore[arg-type]
+
+    class AttrModel:
+        _s_type = "AttrModel"
+        _s_jsonapi_attrs = {"known": SimpleNamespace(type=object())}
+
+    monkeypatch.setattr("safrs.fastapi.api.parse_attr", lambda *_a, **_k: (_ for _ in ()).throw(TypeError("boom")))
+    parsed = api._parse_attributes_for_model(AttrModel, {"known": "x", "unknown": "y"})
+    assert parsed["known"] == "x"
+    assert "unknown" not in parsed
+
+    sparse = api._parse_sparse_fields(FastThing, _request("fields[FastThing]=name,description"))
+    assert sparse == {"name", "description"}
+
+    include_paths = api._parse_include_paths(FastAuthor, _request("include=.,books"))
+    assert include_paths == [["books"]]
+
+    author = safrs.DB.session.query(FastAuthor).filter_by(name="author-1").one()
+    included: list[dict[str, Any]] = []
+    api._collect_included(FastAuthor, author, [["books", "author"]], {}, set(), included)
+    assert any(item["type"] == "FastBook" for item in included)
+    assert any(item["type"] == "FastAuthor" for item in included)
+
+    inst = api._get_instance(FastAuthor)(str(author.id), _request("include=books"))
+    assert "included" in inst
+
+    class BrokenModel:
+        _s_type = "Broken"
+
+        @staticmethod
+        def get_instance(_object_id: str) -> Any:
+            raise RuntimeError("broken get_instance")
+
+    with pytest.raises(RuntimeError):
+        api._get_instance(BrokenModel)("1", _request(""))
+
+
+def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+
+    author1 = safrs.DB.session.query(FastAuthor).filter_by(name="author-1").one()
+    author2 = safrs.DB.session.query(FastAuthor).filter_by(name="author-2").one()
+    book_other = safrs.DB.session.query(FastBook).filter_by(author_id=author2.id).one()
+    book_one = safrs.DB.session.query(FastBook).filter_by(author_id=author1.id).first()
+
+    class PostDummyModel:
+        _s_type = "PostDummyModel"
+        _s_jsonapi_attrs = {"name": object()}
+
+        @classmethod
+        def _s_post(cls, **_kwargs: Any) -> Any:
+            return SimpleNamespace(jsonapi_id="1", name="x", included_list=[None, "", "books", "books"])
+
+    post_result = api._post_collection(PostDummyModel)(
+        _request(""),
+        {"data": {"type": "PostDummyModel", "attributes": {"name": "x"}}},
+    )
+    assert post_result.status_code == 201
+
+    class BrokenPostModel(PostDummyModel):
+        @classmethod
+        def _s_post(cls, **_kwargs: Any) -> Any:
+            raise RuntimeError("post boom")
+
+    with pytest.raises(RuntimeError):
+        api._post_collection(BrokenPostModel)(
+            _request(""),
+            {"data": {"type": "PostDummyModel", "attributes": {"name": "x"}}},
+        )
+
+    class BrokenPatchModel:
+        _s_type = "BrokenPatchModel"
+        _s_jsonapi_attrs = {"name": object()}
+
+        @staticmethod
+        def get_instance(_object_id: str) -> Any:
+            raise RuntimeError("patch boom")
+
+    with pytest.raises(RuntimeError):
+        api._patch_instance(BrokenPatchModel)(
+            "1",
+            _request(""),
+            {"data": {"type": "BrokenPatchModel", "attributes": {"name": "x"}}},
+        )
+
+    class DeleteOKModel:
+        @staticmethod
+        def get_instance(_object_id: str) -> Any:
+            return SimpleNamespace(_s_delete=lambda: None)
+
+    delete_ok = api._delete_instance(DeleteOKModel)("1")
+    assert delete_ok.status_code == 204
+
+    class DeleteBrokenModel:
+        @staticmethod
+        def get_instance(_object_id: str) -> Any:
+            raise RuntimeError("delete boom")
+
+    with pytest.raises(RuntimeError):
+        api._delete_instance(DeleteBrokenModel)("1")
+
+    class DeleteJSONAPIModel:
+        @staticmethod
+        def get_instance(_object_id: str) -> Any:
+            raise JSONAPIHTTPError(418, {"errors": []})
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._delete_instance(DeleteJSONAPIModel)("1")
+
+    rel_item = api._get_relationship_item(FastAuthor, "books")(str(author1.id), str(book_one.id), _request(""))
+    assert rel_item["data"]["id"] == str(book_one.id)
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._get_relationship_item(FastBook, "unknown_rel")("1", "1", _request(""))
+
+    patched_many = api._patch_relationship(FastAuthor, "books")(
+        str(author1.id),
+        {"data": [{"type": "FastBook", "id": str(book_other.id)}]},
+    )
+    assert patched_many["meta"]["count"] == 1
+
+    patched_toone_none = api._patch_relationship(FastBook, "author")(str(book_other.id), {"data": None})
+    assert patched_toone_none.status_code == 204
+    patched_toone_set = api._patch_relationship(FastBook, "author")(
+        str(book_other.id),
+        {"data": {"type": "FastAuthor", "id": str(author2.id)}},
+    )
+    assert patched_toone_set.status_code == 204
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._patch_relationship(FastBook, "unknown_rel")("1", {"data": None})
+    with pytest.raises(JSONAPIHTTPError):
+        api._patch_relationship(FastAuthor, "books")(str(author1.id), {"data": {"id": str(book_other.id)}})
+
+    posted_many = api._post_relationship(FastAuthor, "books")(
+        str(author1.id),
+        {"data": [{"type": "FastBook", "id": str(book_other.id)}]},
+    )
+    assert posted_many.status_code == 204
+    posted_toone = api._post_relationship(FastBook, "author")(
+        str(book_other.id),
+        {"data": {"type": "FastAuthor", "id": str(author1.id)}},
+    )
+    assert posted_toone["data"]["type"] == "FastAuthor"
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._post_relationship(FastBook, "unknown_rel")("1", {"data": {}})
+    with pytest.raises(JSONAPIHTTPError):
+        api._post_relationship(FastBook, "author")(str(book_other.id), {"data": []})
+
+    deleted_many = api._delete_relationship(FastAuthor, "books")(
+        str(author1.id),
+        {"data": [{"type": "FastBook", "id": str(book_other.id)}]},
+    )
+    assert deleted_many.status_code == 204
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._delete_relationship(FastBook, "unknown_rel")("1", {"data": {}})
+    with pytest.raises(JSONAPIHTTPError):
+        api._delete_relationship(FastBook, "author")(str(book_other.id), {"data": "bad"})
