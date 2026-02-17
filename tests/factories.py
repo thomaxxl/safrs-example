@@ -7,6 +7,11 @@ db = safrs.DB
 
 
 class BaseFactory(factory.alchemy.SQLAlchemyModelFactory):
+    class Meta:
+        abstract = True
+        sqlalchemy_session = db.session
+        sqlalchemy_session_persistence = "commit"
+
     @classmethod
     def _create(cls, model_class, *args, **kwargs):
         # Set session last second to get the right session

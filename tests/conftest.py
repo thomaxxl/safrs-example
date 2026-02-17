@@ -1,6 +1,5 @@
 import datetime
 import pytest
-from sqlalchemy import event
 
 from sqlalchemy.orm import scoped_session
 from sqlalchemy.orm import sessionmaker
@@ -65,19 +64,21 @@ def db_session(connection,scope="session"):
     # Outer transaction (rolled back at end of test)
     transaction = connection.begin()
 
-    # Session bound to the connection
-    session_factory = sessionmaker(bind=connection)
+    # IMPORTANT:
+    # SAFRS commits on success and rollbacks on any exception (incl. ValidationError).
+    # In tests we keep one outer transaction per test; SAFRS must not be able to
+    # commit/rollback that outer transaction or it will wipe fixtures and deassociate
+    # the connection transaction.
+    #
+    # join_transaction_mode="create_savepoint" makes Session commit/rollback use
+    # SAVEPOINTs instead of the outer transaction.
+    session_factory = sessionmaker(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
     session = scoped_session(session_factory)
     db.session = session
-
-    # Start a SAVEPOINT so application commit/rollback doesn't end the outer transaction
-    session().begin_nested()
-
-    @event.listens_for(session(), "after_transaction_end")
-    def _restart_savepoint(sess, trans):
-        # Restart the SAVEPOINT after commit/rollback of the nested transaction
-        if trans.nested and not trans._parent.nested:
-            sess.begin_nested()
 
     yield session
 

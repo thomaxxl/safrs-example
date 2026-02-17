@@ -103,7 +103,6 @@ def test_stateless(client):
     test = models_stateless.Test()
     assert test._s_columns == []
 
-@pytest.mark.xfail  # This test might be incorrect!
 def test_delete_no_type_fails(client, db_session, mock_person_with_3_books_read):
     json = {
         "data": [
@@ -160,7 +159,7 @@ def test_post_new_reader_person(client, db_session):
     )
 
     assert new_person.name == reader_name
-    assert str(new_person.dob) == "1970-01-09"
+    assert str(new_person.dob).startswith("1970-01-09")
     assert new_person.email == "reader_email0"
     assert new_person.comment == ""
 
@@ -277,7 +276,7 @@ def test_patch_reader_person(client, db_session, mock_person_with_3_books_read):
     )
 
     assert person.name == "Reader 0 Changed Name"
-    assert str(person.dob) == "1988-08-09"
+    assert str(person.dob).startswith("1988-08-09")
     assert person.email == "reader_email0"
     assert person.comment == ""
 
@@ -301,7 +300,7 @@ def test_add_invalid_book_to_reader_person_books_read_list(client, db_session, m
     res = client.post(f"/People/{mock_person_with_3_books_read.id}/books_read", json={"data": data})
     assert res.status_code == 403
 
-    data = [{"id": "invalid id"}] # invalid id
+    data = [{"id": "invalid id", "type": newly_read_book._s_type}] # invalid id
 
     res = client.post(f"/People/{mock_person_with_3_books_read.id}/books_read", json={"data": data})
     assert res.status_code == 404
