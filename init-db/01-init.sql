@@ -1,0 +1,3 @@
+CREATE DATABASE safrs;
+\c safrs
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
