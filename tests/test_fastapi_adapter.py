@@ -4,8 +4,10 @@ from typing import Any, Generator
 import pytest
 
 import safrs
+from safrs.api_methods import duplicate
 from safrs import SAFRSBase
 from safrs.errors import JsonapiError, SystemValidationError, ValidationError
+from safrs.swagger_doc import jsonapi_rpc
 from sqlalchemy import Column, ForeignKey, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, relationship, scoped_session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -30,6 +32,12 @@ class FastAuthor(SAFRSBase, Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String)
+    duplicate = duplicate
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"])
+    def lookup_by_name(cls, name: str = "") -> dict[str, Any]:
+        return {"meta": {"name": name, "count": cls.query.filter_by(name=name).count()}}
 
 
 class FastBook(SAFRSBase, Base):
@@ -47,6 +55,10 @@ class FastThing(SAFRSBase, Base):
     id = Column(Integer, primary_key=True)
     name = Column(String)
     description = Column(String)
+
+    @jsonapi_rpc(http_methods=["POST"])
+    def prefix_name(self, prefix: str = "") -> dict[str, Any]:
+        return {"meta": {"value": f"{prefix}{self.name}"}}
 
 
 def _request(query: str = "") -> Request:
@@ -73,38 +85,39 @@ def fastapi_client() -> Generator[TestClient, None, None]:
     safrs.DB = _SAFRSDBWrapper(Session, Base)
     Base.metadata.create_all(engine)
 
-    author = FastAuthor(name="author-1")
-    author2 = FastAuthor(name="author-2")
-    book = FastBook(title="book-1", author=author)
-    book2 = FastBook(title="book-3", author=author)
-    book3 = FastBook(title="book-2", author=author)
-    book4 = FastBook(title="book-0", author=author2)
-    thing_a = FastThing(name="alpha", description="A")
-    thing_b = FastThing(name="beta", description="B")
-    Session.add_all([author, author2, book, book2, book3, book4, thing_a, thing_b])
-    Session.commit()
+    try:
+        author = FastAuthor(name="author-1")
+        author2 = FastAuthor(name="author-2")
+        book = FastBook(title="book-1", author=author)
+        book2 = FastBook(title="book-3", author=author)
+        book3 = FastBook(title="book-2", author=author)
+        book4 = FastBook(title="book-0", author=author2)
+        thing_a = FastThing(name="alpha", description="A")
+        thing_b = FastThing(name="beta", description="B")
+        Session.add_all([author, author2, book, book2, book3, book4, thing_a, thing_b])
+        Session.commit()
 
-    app = FastAPI()
+        app = FastAPI()
 
-    @app.middleware("http")
-    async def remove_session_middleware(request: Request, call_next):
-        try:
-            return await call_next(request)
-        finally:
-            Session.remove()
+        @app.middleware("http")
+        async def remove_session_middleware(request: Request, call_next):
+            try:
+                return await call_next(request)
+            finally:
+                Session.remove()
 
-    api = SafrsFastAPI(app)
-    app.state.safrs_api = api
-    api.expose_object(FastThing)
-    api.expose_object(FastAuthor)
-    api.expose_object(FastBook)
+        api = SafrsFastAPI(app)
+        app.state.safrs_api = api
+        api.expose_object(FastThing)
+        api.expose_object(FastAuthor)
+        api.expose_object(FastBook)
 
-    with TestClient(app) as client:
-        yield client
-
-    Session.remove()
-    Base.metadata.drop_all(engine)
-    safrs.DB = original_db
+        with TestClient(app) as client:
+            yield client
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
 
 
 def test_fastapi_expose_object_rejects_s_expose_false() -> None:
@@ -217,27 +230,29 @@ def test_fastapi_expose_object_dependencies_enforced() -> None:
     Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
     safrs.DB = _SAFRSDBWrapper(Session, Base)
     Base.metadata.create_all(engine)
-    Session.add(FastThing(name="auth-required", description="x"))
-    Session.commit()
 
-    app = FastAPI()
+    try:
+        Session.add(FastThing(name="auth-required", description="x"))
+        Session.commit()
 
-    def require_auth(request: Request) -> None:
-        if request.headers.get("x-test-auth") != "ok":
-            raise HTTPException(status_code=401, detail="Unauthorized")
+        app = FastAPI()
 
-    api = SafrsFastAPI(app)
-    api.expose_object(FastThing, dependencies=[require_auth])
+        def require_auth(request: Request) -> None:
+            if request.headers.get("x-test-auth") != "ok":
+                raise HTTPException(status_code=401, detail="Unauthorized")
 
-    with TestClient(app) as client:
-        unauthorized = client.get("/FastThings")
-        assert unauthorized.status_code == 401
-        authorized = client.get("/FastThings", headers={"x-test-auth": "ok"})
-        assert authorized.status_code == 200
+        api = SafrsFastAPI(app)
+        api.expose_object(FastThing, dependencies=[require_auth])
 
-    Session.remove()
-    Base.metadata.drop_all(engine)
-    safrs.DB = original_db
+        with TestClient(app) as client:
+            unauthorized = client.get("/FastThings")
+            assert unauthorized.status_code == 401
+            authorized = client.get("/FastThings", headers={"x-test-auth": "ok"})
+            assert authorized.status_code == 200
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
 
 
 def test_fastapi_delete_toone_relationship_is_idempotent(fastapi_client: TestClient) -> None:
@@ -255,6 +270,46 @@ def test_fastapi_delete_toone_relationship_is_idempotent(fastapi_client: TestCli
     delete_payload_list = {"data": [delete_payload["data"]]}
     delete_two = fastapi_client.request("DELETE", "/FastBooks/1/author", json=delete_payload_list)
     assert delete_two.status_code == 204
+
+
+def test_fastapi_post_with_relationship_payload_returns_included(fastapi_client: TestClient) -> None:
+    payload = {
+        "data": {
+            "type": "FastBook",
+            "attributes": {"title": "book-from-rel-post"},
+            "relationships": {
+                "author": {
+                    "data": {
+                        "type": "FastAuthor",
+                        "attributes": {"name": "author-from-rel-post"},
+                    }
+                }
+            },
+        }
+    }
+
+    response = fastapi_client.post("/FastBooks", json=payload)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["data"]["attributes"]["title"] == "book-from-rel-post"
+    assert "included" in body
+    assert any(item["type"] == "FastAuthor" for item in body["included"])
+
+
+def test_fastapi_rpc_routes_instance_class_and_duplicate(fastapi_client: TestClient) -> None:
+    instance_rpc = fastapi_client.post("/FastThings/1/prefix_name", json={"meta": {"args": {"prefix": "X-"}}})
+    assert instance_rpc.status_code == 200
+    assert instance_rpc.json()["meta"]["value"] == "X-alpha"
+
+    class_rpc = fastapi_client.post("/FastAuthors/lookup_by_name", json={"meta": {"args": {"name": "author-1"}}})
+    assert class_rpc.status_code == 200
+    assert class_rpc.json()["meta"]["count"] >= 1
+
+    duplicate_rpc = fastapi_client.post("/FastAuthors/1/duplicate", json={})
+    assert duplicate_rpc.status_code == 200
+    payload = duplicate_rpc.json()
+    assert payload["data"]["type"] == "FastAuthor"
+    assert "id" in payload["data"]
 
 
 def test_fastapi_internal_helper_branches(monkeypatch: pytest.MonkeyPatch, fastapi_client: TestClient) -> None:
@@ -282,6 +337,10 @@ def test_fastapi_internal_helper_branches(monkeypatch: pytest.MonkeyPatch, fasta
         pass
 
     assert api._resolve_relationships(NoMapper) == {}
+    class HasFilteredRelationships:
+        _s_relationships = {"books": object()}
+
+    assert api._resolve_relationships(HasFilteredRelationships) == HasFilteredRelationships._s_relationships
     assert api._parse_include_paths(FastThing, _request("include=,")) == []
     assert ["books"] in api._parse_include_paths(FastAuthor, _request("include=%2Ball"))
     with pytest.raises(JSONAPIHTTPError):
