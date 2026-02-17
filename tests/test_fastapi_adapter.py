@@ -42,6 +42,7 @@ class FastAuthor(SAFRSBase, Base):
 
 class FastBook(SAFRSBase, Base):
     __tablename__ = "FastBooks"
+    _s_allow_add_rels = True
 
     id = Column(Integer, primary_key=True)
     title = Column(String)
@@ -277,14 +278,15 @@ def test_fastapi_post_with_relationship_payload_returns_included(fastapi_client:
         "data": {
             "type": "FastBook",
             "attributes": {"title": "book-from-rel-post"},
-            "relationships": {
-                "author": {
-                    "data": {
-                        "type": "FastAuthor",
-                        "attributes": {"name": "author-from-rel-post"},
+                "relationships": {
+                    "author": {
+                        "data": {
+                            "type": "FastAuthor",
+                            "id": 999,
+                            "attributes": {"name": "author-from-rel-post"},
+                        }
                     }
-                }
-            },
+                },
         }
     }
 
