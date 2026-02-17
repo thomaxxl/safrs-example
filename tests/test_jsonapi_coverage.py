@@ -17,6 +17,14 @@ def _thing_api():
     return ThingAPI()
 
 
+def _person_rpc_api():
+    class PersonRPCAPI(jsonapi.SAFRSJSONRPCAPI):
+        SAFRSObject = models.Person
+        method_name = "my_rpc"
+
+    return PersonRPCAPI()
+
+
 def test_resource_head_options_fallback_to_make_response(app, api, monkeypatch):
     """
     Covers Resource.head/options fallback branch (make_response()) when super has no method.
@@ -206,3 +214,36 @@ def test_post_and_create_instance_validation_branches(app, api, monkeypatch):
         created = thing_api._create_instance({"type": models.Thing._s_type, "id": "client-id"})
         assert created == {"created": True}
 
+
+def test_jsonrpc_get_invalid_id_branch(monkeypatch):
+    """
+    Targets: jsonapi.py 1001-1004
+    """
+    rpc_api = _person_rpc_api()
+    monkeypatch.setattr(models.Person, "get_instance", classmethod(lambda cls, _id: None))
+    with pytest.raises(ValidationError):
+        rpc_api.get(**{rpc_api._s_object_id: "does-not-exist"})
+
+
+def test_jsonrpc_create_response_non_jsonapi_and_default_meta(app):
+    """
+    Targets: jsonapi.py 1028-1031
+    """
+    rpc_api = _person_rpc_api()
+
+    def non_jsonapi_method(**_kwargs):
+        return {"raw": True}
+
+    non_jsonapi_method.valid_jsonapi = False
+
+    def default_method(**_kwargs):
+        return 42
+
+    with app.test_request_context("/"):
+        raw_resp = rpc_api._create_rpc_response(non_jsonapi_method, {})
+        assert raw_resp.status_code == 200
+        assert raw_resp.get_json() == {"raw": True}
+
+        default_resp = rpc_api._create_rpc_response(default_method, {})
+        assert default_resp.status_code == 200
+        assert default_resp.get_json() == {"meta": {"result": 42}}
