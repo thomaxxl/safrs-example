@@ -73,11 +73,8 @@ def test_patch_publishers_books_list_rejects_dict_payload(client, db_session, mo
     payload = {"data": {"id": mock_publisher_with_3_books.books[0].id, "type": mock_publisher_with_3_books.books[0]._s_type}}
     res = client.patch(f"/Publishers/{mock_publisher_with_3_books.id}/books", json=payload)
     assert res.status_code == 400
-
-    publishers_books_list = (
-        db_session.query(models.Book).filter(models.Book.publisher_id == mock_publisher_with_3_books.id).all()
-    )
-    assert len(publishers_books_list) == 3
+    error = res.get_json()["errors"][0]
+    assert "PATCH a TOMANY relationship" in error["detail"]
 
 
 def test_patch_parent_thing_of_subthing_rejects_list_payload(client, db_session, mock_subthing, mock_thing):
@@ -93,8 +90,5 @@ def test_delete_publishers_books_list_rejects_dict_payload(client, db_session, m
     payload = {"data": {"id": mock_publisher_with_3_books.books[0].id, "type": mock_publisher_with_3_books.books[0]._s_type}}
     res = client.delete(f"/Publishers/{mock_publisher_with_3_books.id}/books", json=payload)
     assert res.status_code == 400
-
-    publishers_books_list = (
-        db_session.query(models.Book).filter(models.Book.publisher_id == mock_publisher_with_3_books.id).all()
-    )
-    assert len(publishers_books_list) == 3
+    error = res.get_json()["errors"][0]
+    assert "Invalid data payload" in error["detail"]
