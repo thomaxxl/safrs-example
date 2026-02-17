@@ -61,10 +61,14 @@ def fastapi_client() -> Generator[TestClient, None, None]:
     Base.metadata.create_all(engine)
 
     author = FastAuthor(name="author-1")
+    author2 = FastAuthor(name="author-2")
     book = FastBook(title="book-1", author=author)
+    book2 = FastBook(title="book-3", author=author)
+    book3 = FastBook(title="book-2", author=author)
+    book4 = FastBook(title="book-0", author=author2)
     thing_a = FastThing(name="alpha", description="A")
     thing_b = FastThing(name="beta", description="B")
-    Session.add_all([author, book, thing_a, thing_b])
+    Session.add_all([author, author2, book, book2, book3, book4, thing_a, thing_b])
     Session.commit()
 
     app = FastAPI()
@@ -126,6 +130,67 @@ def test_fastapi_returns_jsonapi_error_document(fastapi_client: TestClient) -> N
     assert "errors" in payload
     assert "detail" not in payload
     assert payload["errors"][0]["status"] == "400"
+
+
+def test_fastapi_sparse_fields_collection_and_instance(fastapi_client: TestClient) -> None:
+    base = fastapi_client.get("/FastThings").json()["data"]
+    model_type = base[0]["type"]
+
+    collection = fastapi_client.get(f"/FastThings?fields[{model_type}]=name")
+    assert collection.status_code == 200
+    for row in collection.json()["data"]:
+        assert "name" in row["attributes"]
+        assert "description" not in row["attributes"]
+
+    instance = fastapi_client.get(f"/FastThings/1?fields[{model_type}]=description")
+    assert instance.status_code == 200
+    attrs = instance.json()["data"]["attributes"]
+    assert "description" in attrs
+    assert "name" not in attrs
+
+
+def test_fastapi_include_and_relationship_sort_pagination(fastapi_client: TestClient) -> None:
+    collection = fastapi_client.get("/FastBooks?include=author")
+    assert collection.status_code == 200
+    payload = collection.json()
+    assert "included" in payload
+    assert any(item["type"] == "FastAuthor" for item in payload["included"])
+
+    rel = fastapi_client.get("/FastAuthors/1/books?sort=-title&page[limit]=2")
+    assert rel.status_code == 200
+    rel_data = rel.json()["data"]
+    assert [row["attributes"]["title"] for row in rel_data] == ["book-3", "book-2"]
+
+
+def test_fastapi_collection_sort_pagination_and_filter_bracket(fastapi_client: TestClient) -> None:
+    sorted_page = fastapi_client.get("/FastThings?sort=-name&page[limit]=1")
+    assert sorted_page.status_code == 200
+    assert sorted_page.json()["data"][0]["attributes"]["name"] == "beta"
+
+    sorted_page_2 = fastapi_client.get("/FastThings?sort=-name&page[offset]=1&page[limit]=1")
+    assert sorted_page_2.status_code == 200
+    assert sorted_page_2.json()["data"][0]["attributes"]["name"] == "alpha"
+
+    invalid_filter = fastapi_client.get("/FastThings?filter[invalid]=1")
+    assert invalid_filter.status_code == 200
+    assert invalid_filter.json()["data"] == []
+
+
+def test_fastapi_validation_errors_for_post_and_patch(fastapi_client: TestClient) -> None:
+    invalid_post = fastapi_client.post(
+        "/FastThings",
+        json={"data": {"type": "WrongType", "attributes": {"name": "x"}}},
+    )
+    assert invalid_post.status_code == 400
+    assert "errors" in invalid_post.json()
+    assert "detail" not in invalid_post.json()
+
+    invalid_patch = fastapi_client.patch(
+        "/FastThings/1",
+        json={"data": {"id": "2", "type": "FastThing", "attributes": {"name": "x"}}},
+    )
+    assert invalid_patch.status_code == 400
+    assert invalid_patch.json()["errors"][0]["detail"] == "Body id does not match path id"
 
 
 def test_fastapi_expose_object_dependencies_enforced() -> None:
