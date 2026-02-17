@@ -7,7 +7,7 @@ import sqlalchemy
 from app import models
 
 import safrs.jsonapi as jsonapi
-from safrs.errors import ValidationError
+from safrs.errors import NotFoundError, ValidationError
 
 
 def _thing_api():
@@ -23,6 +23,17 @@ def _person_rpc_api():
         method_name = "my_rpc"
 
     return PersonRPCAPI()
+
+
+def _rel_api_stub(direction, parse_args_fn, target=None):
+    api = object.__new__(jsonapi.SAFRSRestRelationshipAPI)
+    api.SAFRSObject = SimpleNamespace(relationship=SimpleNamespace(direction=direction))
+    api.parse_args = parse_args_fn
+    api.target = target or SimpleNamespace(_s_type="Target", get_instance=lambda _id: None)
+    api.child_object_id = "ChildId"
+    api.parent_object_id = "ParentId"
+    api.rel_name = "rel"
+    return api
 
 
 def test_resource_head_options_fallback_to_make_response(app, api, monkeypatch):
@@ -213,6 +224,170 @@ def test_post_and_create_instance_validation_branches(app, api, monkeypatch):
         m.setattr(models.Thing, "_s_post", classmethod(lambda cls, **kwargs: {"created": True}))
         created = thing_api._create_instance({"type": models.Thing._s_type, "id": "client-id"})
         assert created == {"created": True}
+
+
+def test_post_bulk_and_unserializable_warning_branches(app, api, monkeypatch):
+    """
+    Targets: jsonapi.py 429, 446
+    """
+    thing_api = _thing_api()
+
+    with app.test_request_context(
+        "/thing/",
+        method="POST",
+        json={"data": [{"type": models.Thing._s_type, "attributes": {"name": "x"}}]},
+    ):
+        from flask import request
+        with monkeypatch.context() as m:
+            req_cls = type(request._get_current_object())
+            m.setattr(req_cls, "is_bulk", property(lambda _self: False), raising=False)
+            m.setattr(thing_api, "_create_instance", lambda *_a, **_k: {"ok": True})
+            resp = thing_api.post()
+            assert resp.status_code == 201
+
+    with app.test_request_context(
+        "/thing/",
+        method="POST",
+        json={"data": {"type": models.Thing._s_type, "attributes": {"name": "x"}}},
+    ):
+        with monkeypatch.context() as m:
+            m.setattr(thing_api, "_create_instance", lambda *_a, **_k: SimpleNamespace(jsonapi_id="1"))
+            resp = thing_api.post()
+            assert resp.status_code == 201
+
+
+def test_rest_delete_missing_id_branch(app, api):
+    """
+    Targets: jsonapi.py 522
+    """
+    thing_api = _thing_api()
+    with app.test_request_context("/thing/", method="DELETE"):
+        with pytest.raises(ValidationError):
+            thing_api.delete()
+
+
+def test_relationship_init_and_get_notfound_branches(app, api, mock_thing, mock_subthing):
+    """
+    Targets: jsonapi.py 587, 628, 630
+    """
+    class Node:
+        _s_object_id = "NodeId"
+
+    rel = SimpleNamespace(parent=SimpleNamespace(class_=Node), mapper=SimpleNamespace(class_=Node), key="friends")
+
+    class DummyRelAPI(jsonapi.SAFRSRestRelationshipAPI):
+        SAFRSObject = SimpleNamespace(relationship=rel)
+
+    rel_api = DummyRelAPI()
+    assert rel_api.child_object_id == "NodeId2"
+
+    api_628 = _rel_api_stub(
+        direction=object(),
+        parse_args_fn=lambda **_k: (None, mock_thing),
+        target=SimpleNamespace(_s_type=models.SubThing._s_type, get_instance=lambda _id: mock_subthing),
+    )
+    with app.test_request_context("/rel", method="GET"):
+        with pytest.raises(NotFoundError):
+            api_628.get(**{"ChildId": mock_subthing.id})
+
+    api_630 = _rel_api_stub(
+        direction=object(),
+        parse_args_fn=lambda **_k: (None, []),
+        target=SimpleNamespace(_s_type=models.SubThing._s_type, get_instance=lambda _id: mock_subthing),
+    )
+    with app.test_request_context("/rel", method="GET"):
+        with pytest.raises(NotFoundError):
+            api_630.get(**{"ChildId": mock_subthing.id})
+
+
+def test_relationship_post_delete_and_parse_args_branches(app, api, mock_subthing):
+    """
+    Targets: jsonapi.py 790, 797, 845, 890, 896, 909
+    """
+    manytoone_api = _rel_api_stub(
+        direction=jsonapi.MANYTOONE,
+        parse_args_fn=lambda **_k: (SimpleNamespace(), None),
+        target=SimpleNamespace(_s_type=models.SubThing._s_type, get_instance=lambda _id: mock_subthing),
+    )
+    with app.test_request_context("/rel", method="POST", json={}):
+        with pytest.raises(ValidationError):
+            manytoone_api.post()
+    with app.test_request_context("/rel", method="POST", json={"data": [{"id": mock_subthing.id, "type": models.SubThing._s_type}]}):
+        with pytest.raises(ValidationError):
+            manytoone_api.post()
+
+    tomany_api = _rel_api_stub(
+        direction=object(),
+        parse_args_fn=lambda **_k: (SimpleNamespace(), []),
+        target=SimpleNamespace(_s_type=models.SubThing._s_type, get_instance=lambda _id: mock_subthing),
+    )
+    with app.test_request_context("/rel", method="DELETE", json={"data": []}):
+        from flask import request
+        req_obj = request._get_current_object()
+        setattr(req_obj, "get_jsonapi_payload", lambda: "not-a-dict")
+        with pytest.raises(ValidationError):
+            tomany_api.delete()
+
+    with app.test_request_context("/rel", method="DELETE", json={"data": [{"id": mock_subthing.id, "type": "Wrong"}]}):
+        with pytest.raises(ValidationError):
+            tomany_api.delete()
+
+    with app.test_request_context("/rel", method="DELETE", json={"data": [{"id": mock_subthing.id, "type": models.SubThing._s_type}]}):
+        resp = tomany_api.delete()
+        assert resp.status_code == 204
+
+    parse_api = object.__new__(jsonapi.SAFRSRestRelationshipAPI)
+    parse_api.parent_object_id = "ParentId"
+    with pytest.raises(ValidationError):
+        parse_api.parse_args()
+
+
+def test_jsonrpc_post_get_invalid_method_public_and_payload_branches(app, monkeypatch):
+    """
+    Targets: jsonapi.py 964, 973, 975, 983, 1014, 1016
+    """
+    rpc_api = _person_rpc_api()
+
+    with monkeypatch.context() as m:
+        m.setattr(models.Person, "get_instance", classmethod(lambda cls, _id: None))
+        with app.test_request_context("/", method="POST", json={"a": 1}):
+            with pytest.raises(ValidationError):
+                rpc_api.post(**{rpc_api._s_object_id: "bad-id"})
+
+    with app.test_request_context("/", method="POST", json={"a": 1}):
+        rpc_api.method_name = "does_not_exist"
+        with pytest.raises(ValidationError):
+            rpc_api.post()
+
+    def _private_rpc(**kwargs):
+        return kwargs
+
+    monkeypatch.setattr(models.Person, "_private_rpc", staticmethod(_private_rpc), raising=False)
+    with app.test_request_context("/", method="POST", json={"a": 1}):
+        rpc_api.method_name = "_private_rpc"
+        with pytest.raises(ValidationError):
+            rpc_api.post()
+
+    def plain_rpc(**kwargs):
+        return kwargs
+
+    plain_rpc.valid_jsonapi = False
+    setattr(plain_rpc, "__rest_doc", {})
+    monkeypatch.setattr(models.Person, "plain_rpc", staticmethod(plain_rpc), raising=False)
+    with app.test_request_context("/", method="POST", json={"a": 1}):
+        rpc_api.method_name = "plain_rpc"
+        resp = rpc_api.post()
+        assert resp.get_json() == {"a": 1}
+
+    with app.test_request_context("/", method="GET"):
+        rpc_api.method_name = "does_not_exist_get"
+        with pytest.raises(ValidationError):
+            rpc_api.get()
+
+    with app.test_request_context("/", method="GET"):
+        rpc_api.method_name = "_private_rpc"
+        with pytest.raises(ValidationError):
+            rpc_api.get()
 
 
 def test_jsonrpc_get_invalid_id_branch(monkeypatch):
