@@ -67,3 +67,34 @@ def test_patch_publishers_books_list(client, db_session, mock_publisher_with_3_b
     response_data = res.get_json()
     assert len(publishers_books_list) == 1
     assert mock_publisher_with_3_books.books[0].id == response_data["data"][0]["id"]
+
+
+def test_patch_publishers_books_list_rejects_dict_payload(client, db_session, mock_publisher_with_3_books):
+    payload = {"data": {"id": mock_publisher_with_3_books.books[0].id, "type": mock_publisher_with_3_books.books[0]._s_type}}
+    res = client.patch(f"/Publishers/{mock_publisher_with_3_books.id}/books", json=payload)
+    assert res.status_code == 400
+
+    publishers_books_list = (
+        db_session.query(models.Book).filter(models.Book.publisher_id == mock_publisher_with_3_books.id).all()
+    )
+    assert len(publishers_books_list) == 3
+
+
+def test_patch_parent_thing_of_subthing_rejects_list_payload(client, db_session, mock_subthing, mock_thing):
+    payload = {"data": [{"id": mock_thing.id, "type": mock_thing._s_type}]}
+    res = client.patch(f"/subthing/{mock_subthing.id}/thing/", json=payload)
+    assert res.status_code == 400
+
+    subthing = db_session.query(models.SubThing).filter(models.SubThing.id == mock_subthing.id).one_or_none()
+    assert subthing.thing.id == mock_subthing.thing.id
+
+
+def test_delete_publishers_books_list_rejects_dict_payload(client, db_session, mock_publisher_with_3_books):
+    payload = {"data": {"id": mock_publisher_with_3_books.books[0].id, "type": mock_publisher_with_3_books.books[0]._s_type}}
+    res = client.delete(f"/Publishers/{mock_publisher_with_3_books.id}/books", json=payload)
+    assert res.status_code == 400
+
+    publishers_books_list = (
+        db_session.query(models.Book).filter(models.Book.publisher_id == mock_publisher_with_3_books.id).all()
+    )
+    assert len(publishers_books_list) == 3
