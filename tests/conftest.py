@@ -61,6 +61,8 @@ def connection(database):
 
 @pytest.fixture(autouse=True)
 def db_session(connection,scope="session"):
+    original_session = db.session
+
     # Outer transaction (rolled back at end of test)
     transaction = connection.begin()
 
@@ -80,10 +82,12 @@ def db_session(connection,scope="session"):
     session = scoped_session(session_factory)
     db.session = session
 
-    yield session
-
-    session.remove()
-    transaction.rollback()
+    try:
+        yield session
+    finally:
+        session.remove()
+        db.session = original_session
+        transaction.rollback()
 
 
 @pytest.fixture(scope="session")
