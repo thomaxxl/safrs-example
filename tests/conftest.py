@@ -90,7 +90,7 @@ def db_session(connection,scope="session"):
         transaction.rollback()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def api(app, database):
     """Init SAFRS"""
     create_api(app)

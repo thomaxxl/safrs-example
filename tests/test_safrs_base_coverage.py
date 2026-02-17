@@ -8,7 +8,33 @@ from sqlalchemy.exc import InvalidRequestError
 
 from app import models
 from tests.factories import BookFactory, PersonFactory, PublisherFactory
+import builtins
+import pytest
+from safrs.errors import ValidationError, SystemValidationError
+from sqlalchemy.exc import InvalidRequestError, ArgumentError
 
+from app import models, models_stateless
+
+
+def _clear_s_columns_cache() -> None:
+    """
+    _s_columns is lru_cache'd (classmethod under a classproperty).
+    Clear it so request-context filtering branches are not bypassed.
+    """
+    try:
+        safrs_base.SAFRSBase.__dict__["_s_columns"].fget.__func__.cache_clear()
+    except Exception:
+        pass
+
+
+def _clear_safrs_subclasses_cache() -> None:
+    """
+    _safrs_subclasses is lru_cache'd; clear to ensure loop/branch coverage.
+    """
+    try:
+        safrs_base.SAFRSBase._safrs_subclasses.cache_clear()
+    except Exception:
+        pass
 
 def _clear_check_perm_cache() -> None:
     """
@@ -230,3 +256,228 @@ def test_class_jsonapi_attrs_type_branch(monkeypatch):
     attrs = models.ThingWType._s_jsonapi_attrs
     assert "Type" in attrs
     _clear_jsonapi_attrs_cache(models.ThingWType)
+
+def test_init_with_Type_kwarg_sets_type_column(monkeypatch):
+    """
+    Covers SAFRSBase.__init__ 'Type' kwarg mapping (your missing ~352).
+    Use ThingWType but neutralize auto-commit by no-op commit.
+    """
+    monkeypatch.setattr(safrs.DB.session, "commit", lambda: None)
+    twt = models.ThingWType(Type="MyType")
+    assert twt.type == "MyType"
+
+
+def test_init_with_jsonapi_attr_kwarg_calls_setter():
+    """
+    Covers SAFRSBase.__init__ jsonapi_attr kwarg handling (also around ~352).
+    UserWithJsonapiAttr.some_attr setter sets .name in safrs-example models.
+    """
+    u = models.UserWithJsonapiAttr(some_attr="via_setter")
+    assert u.name == "via_setter"
+
+
+def test_s_post_strips_client_generated_composite_pks(monkeypatch):
+    """
+    Covers _s_post branch stripping PK columns when allow_client_generated_ids is False
+    (your missing ~444-445).
+    """
+    monkeypatch.setattr(safrs.DB.session, "commit", lambda: None)
+
+    item = models.PKItem._s_post(None, pk_A="A", pk_B="B", foo="bar")
+    # pk_A / pk_B were passed but should have been removed from attributes
+    assert item.pk_A is None
+    assert item.pk_B is None
+
+
+def test_add_rels_validation_paths():
+    """
+    Covers _add_rels validation errors:
+    - _s_allow_add_rels guard (~516)
+    - rel_val shape check (~518)
+    - data2inst payload check (~507) + ensures _safrs_subclasses executes (~554)
+    - payload type mismatch (~530)
+    """
+    _clear_safrs_subclasses_cache()
+
+    book = models.Book(title="b")
+
+    # Guard: _s_allow_add_rels must be enabled
+    book._s_allow_add_rels = False
+    with pytest.raises(ValidationError):
+        book._add_rels(reader={"data": {"id": "1", "type": "Person"}})
+    book._s_allow_add_rels = True
+
+    # Invalid relationship payload (missing "data")
+    with pytest.raises(ValidationError):
+        book._add_rels(reader={})
+
+    # Invalid relationship payload in data2inst (missing "type")
+    with pytest.raises(ValidationError):
+        book._add_rels(reader={"data": {"id": "1"}})
+
+    # Wrong shape for MANYTOONE: list instead of dict
+    with pytest.raises(ValidationError):
+        book._add_rels(reader={"data": []})
+
+
+def test_add_rels_to_many_empty_list_ok():
+    """
+    Covers to-many branch in _add_rels (~524-525) without triggering _s_post().
+    Book has _s_allow_add_rels=True in safrs-example models.
+    """
+    book = models.Book(title="b")
+    book._add_rels(reviews={"data": []})
+    assert list(book.reviews) == []
+
+
+def test_s_columns_request_context_branch(app):
+    """
+    Covers request-context branch in _s_columns (~578).
+    Important: clear cache first, otherwise earlier calls can bypass the branch.
+    """
+    _clear_s_columns_cache()
+    with app.test_request_context("/"):
+        cols = models.Person._s_columns
+        assert cols  # just make sure we executed the branch
+
+
+def test_s_check_perm_missing_guard_branches():
+    """
+    Covers extra _s_check_perm guards:
+    - underscore names (~650)
+    - stateless/no mapper (~660)
+    - invalid property raises SystemValidationError (~686)
+    """
+    _clear_check_perm_cache()
+    assert models.Person._s_check_perm("_private", "r") is False
+
+    _clear_check_perm_cache()
+    assert models_stateless.Test._s_check_perm("anything", "r") is False
+
+    _clear_check_perm_cache()
+    with pytest.raises(SystemValidationError):
+        models.Person._s_check_perm("definitely_not_a_property", "r")
+
+
+def test_instance_jsonapi_attrs_hasattr_fallback_branch(monkeypatch):
+    """
+    Covers instance _s_jsonapi_attrs fallback when hasattr(self, attr) is False (~716-717).
+    This is a defensive branch; easiest is to force hasattr False for one attribute.
+    """
+    thing = models.Thing(name="n", description="X")
+    real_hasattr = builtins.hasattr
+
+    def fake_hasattr(obj, name):
+        if obj is thing and name == "description":
+            return False
+        return real_hasattr(obj, name)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(builtins, "hasattr", fake_hasattr)
+        attrs = thing._s_jsonapi_attrs
+        assert attrs.get("description") == "X"
+
+
+def test_auto_commit_setter_sets_db_commit_flag():
+    """
+    Covers _s_auto_commit setter (~788).
+    It sets the class-level db_commit flag; restore to avoid cross-test side effects.
+    """
+    thing = models.Thing(name="x", description="y")
+    orig = models.Thing.db_commit
+    try:
+        thing._s_auto_commit = (not orig)
+        assert models.Thing.db_commit is (not orig)
+    finally:
+        thing._s_auto_commit = orig
+        assert models.Thing.db_commit is orig
+
+
+def test_get_instance_by_id_and_s_query_error_paths(monkeypatch, db_session):
+    """
+    Covers:
+    - _s_get_instance_by_id (~849-850)
+    - _s_query InvalidRequestError handling for stateless types (~890-893)
+    - _s_query fallback to _table on generic exception (~896)
+    """
+    p = models.Person(name="Q", email="q@example.com")
+    db_session.add(p)
+    db_session.flush()
+
+    q = models.Person._s_get_instance_by_id(p.jsonapi_id)
+    assert q.first() == p
+
+    class DummyStateless(safrs_base.SAFRSBase):
+        _s_stateless = True
+
+    monkeypatch.setattr(
+        safrs.DB.session,
+        "query",
+        lambda *_a, **_k: (_ for _ in ()).throw(InvalidRequestError("boom")),
+    )
+    assert DummyStateless._s_query is None
+
+    class DummyWithTable(safrs_base.SAFRSBase):
+        # base._s_query uses `if _table:` so don't use a SQLAlchemy Table here
+        _table = models.Person
+
+    def fake_query(arg):
+        if arg is DummyWithTable:
+            raise RuntimeError("boom")
+        if arg is DummyWithTable._table:
+            return "fallback_query"
+        raise AssertionError("unexpected query arg")
+
+    monkeypatch.setattr(safrs.DB.session, "query", fake_query)
+    assert DummyWithTable._s_query == "fallback_query"
+
+
+def test_count_large_table_warning_and_sample_id_first_exception(monkeypatch, db_session):
+    """
+    Covers:
+    - normal _s_count path (~1087-1088)
+    - large table warning branch (~1108) by forcing MAX_TABLE_COUNT to 0
+    - _s_sample_id query.first exception path (~1127-1128)
+    """
+    db_session.add(models.Person(name="CountMe", email="countme@example.com"))
+    db_session.flush()
+
+    orig_get_config = safrs_base.get_config
+    monkeypatch.setattr(
+        safrs_base,
+        "get_config",
+        lambda key: 0 if key == "MAX_TABLE_COUNT" else orig_get_config(key),
+    )
+    assert models.Person._s_count() >= 1
+
+    class BoomQuery:
+        def first(self):
+            raise Exception("boom")
+
+    monkeypatch.setattr(models.Person, "query", BoomQuery())
+    assert isinstance(models.Person._s_sample_id(), str)
+
+
+def test_Type_property_setter_executes(monkeypatch):
+    """
+    Covers Type property setter (~1304-1305).
+    Normal `obj.Type = x` is rewritten to `obj.type = x` by SAFRSBase.__setattr__,
+    so call the descriptor setter directly.
+    """
+    monkeypatch.setattr(safrs.DB.session, "commit", lambda: None)
+    # Avoid passing `type=` in __init__ (strict request-context parsing).
+    twt = models.ThingWType()
+    # Call the property setter directly; twt.Type = ... is rewritten by __setattr__.
+    safrs_base.SAFRSBase.Type.fset(twt, "new")
+    assert twt.type == "new"
+
+def test_unicode_and_http_methods_cover_remaining_lines(monkeypatch):
+    # make it robust even if a model has auto-commit enabled
+    monkeypatch.setattr(safrs.DB.session, "add", lambda *_a, **_k: None)
+    monkeypatch.setattr(safrs.DB.session, "commit", lambda *_a, **_k: None)
+
+    t = models.Thing(name="n", description="d")
+
+    assert t.__unicode__() == "n"      # covers 1087-1088
+    assert "GET" in t.http_methods     # covers 554
+
