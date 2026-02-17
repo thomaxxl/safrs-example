@@ -253,24 +253,22 @@ def test_get_collection_startswith(client, mock_thing, db_session):
     ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
     ThingFactory.create(name=mock_thing.name, created=str(datetime.datetime.now()))
 
-    startswith_data = {"meta": {"args": {"name": "mock"}}}
-
-    res = client.post("/thing/startswith", json={"meta": startswith_data})
+    payload = {"meta": {"args": {"name": "mock"}}}
+    res = client.post("/thing/startswith", json=payload)
     assert res.status_code == 200
 
     result = res.get_json()
     assert result["meta"]["count"] == 3
 
 
-@pytest.mark.xfail  # This test might be incorrect!
 def test_get_collection_startswith_does_not_exist(client, mock_thing, db_session):
-    startswith_data = {"meta": {"args": {"name": "foo"}}}
-
-    res = client.post("/thing/startswith", json={"meta": startswith_data})
+    payload = {"meta": {"args": {"name": "foo"}}}
+    res = client.post("/thing/startswith", json=payload)
     assert res.status_code == 200
 
     result = res.get_json()
     assert result["meta"]["count"] == 0
+    assert result["data"] == []
 
 
 def test_delete_thing(client, mock_thing, db_session):
