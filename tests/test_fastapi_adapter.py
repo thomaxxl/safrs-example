@@ -139,6 +139,18 @@ def test_fastapi_expose_object_rejects_method_decorators() -> None:
         api.expose_object(Visible, method_decorators=[lambda f: f])
 
 
+def test_fastapi_expose_object_relationship_routes_use_resolved_relationships(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    monkeypatch.setattr(api, "_resolve_relationships", lambda _model: {})
+    api.expose_object(FastBook)
+
+    paths = {getattr(route, "path", None) for route in app.routes}
+    assert "/FastBooks/{object_id}/author" not in paths
+    assert "/FastBooks/{object_id}/author/{target_id}" not in paths
+    assert "/FastBooks" in paths
+
+
 def test_fastapi_swagger_alias_and_slash_parity(fastapi_client: TestClient) -> None:
     response = fastapi_client.get("/swagger.json")
     assert response.status_code == 200
@@ -219,6 +231,20 @@ def test_fastapi_validation_errors_for_post_and_patch(fastapi_client: TestClient
     )
     assert invalid_patch.status_code == 400
     assert invalid_patch.json()["errors"][0]["detail"] == "Body id does not match path id"
+
+
+def test_fastapi_patch_supports_sparse_fields_and_include(fastapi_client: TestClient) -> None:
+    response = fastapi_client.patch(
+        "/FastBooks/1?include=author&fields[FastBook]=title",
+        json={"data": {"id": "1", "type": "FastBook", "attributes": {"title": "patched-title"}}},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    attrs = body["data"]["attributes"]
+    assert attrs["title"] == "patched-title"
+    assert "author_id" not in attrs
+    assert "included" in body
+    assert any(item["type"] == "FastAuthor" for item in body["included"])
 
 
 def test_fastapi_expose_object_dependencies_enforced() -> None:
@@ -418,6 +444,10 @@ def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> 
     with pytest.raises(JSONAPIHTTPError) as validation_exc:
         api._handle_safrs_exception(ValidationError("bad payload"))
     assert validation_exc.value.status_code == 400
+
+    with pytest.raises(JSONAPIHTTPError) as system_exc:
+        api._handle_safrs_exception(SystemValidationError("server side validation"))
+    assert system_exc.value.status_code == 400
 
     with pytest.raises(RuntimeError):
         api._handle_safrs_exception(RuntimeError("boom"))
