@@ -1,18 +1,19 @@
+from types import SimpleNamespace
 from typing import Any, Generator
 
 import pytest
 
 import safrs
 from safrs import SAFRSBase
-from safrs.errors import SystemValidationError
+from safrs.errors import JsonapiError, SystemValidationError, ValidationError
 from sqlalchemy import Column, ForeignKey, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, relationship, scoped_session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-from safrs.fastapi.api import SafrsFastAPI
+from safrs.fastapi.api import JSONAPIHTTPError, SafrsFastAPI
 
 
 Base = declarative_base()
@@ -48,6 +49,18 @@ class FastThing(SAFRSBase, Base):
     description = Column(String)
 
 
+def _request(query: str = "") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": query.encode(),
+        }
+    )
+
+
 @pytest.fixture()
 def fastapi_client() -> Generator[TestClient, None, None]:
     original_db = safrs.DB
@@ -81,6 +94,7 @@ def fastapi_client() -> Generator[TestClient, None, None]:
             Session.remove()
 
     api = SafrsFastAPI(app)
+    app.state.safrs_api = api
     api.expose_object(FastThing)
     api.expose_object(FastAuthor)
     api.expose_object(FastBook)
@@ -241,3 +255,217 @@ def test_fastapi_delete_toone_relationship_is_idempotent(fastapi_client: TestCli
     delete_payload_list = {"data": [delete_payload["data"]]}
     delete_two = fastapi_client.request("DELETE", "/FastBooks/1/author", json=delete_payload_list)
     assert delete_two.status_code == 204
+
+
+def test_fastapi_internal_helper_branches(monkeypatch: pytest.MonkeyPatch, fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+
+    app = FastAPI()
+
+    @app.get("/swagger.json", include_in_schema=False)
+    def swagger() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    SafrsFastAPI(app)
+    swagger_routes = [route for route in app.routes if getattr(route, "path", None) == "/swagger.json"]
+    assert len(swagger_routes) == 1
+
+    assert api._with_slash_parity("/abc/") == ["/abc", "/abc/"]
+
+    dep = Depends(lambda: None)
+    deps = api._normalize_dependencies([dep, lambda: None])
+    assert deps[0] is dep
+    with pytest.raises(TypeError):
+        api._normalize_dependencies([1])
+
+    class NoMapper:
+        pass
+
+    assert api._resolve_relationships(NoMapper) == {}
+    assert api._parse_include_paths(FastThing, _request("include=,")) == []
+    assert ["books"] in api._parse_include_paths(FastAuthor, _request("include=%2Ball"))
+    with pytest.raises(JSONAPIHTTPError):
+        api._parse_include_paths(FastBook, _request("include=unknown_rel"))
+
+    class QueryLike:
+        def all(self) -> list[int]:
+            return [1, 2]
+
+    assert api._iter_related_items(None) == []
+    assert api._iter_related_items(QueryLike()) == [1, 2]
+    assert api._coerce_items(None) == []
+    assert api._coerce_items(7) == [7]
+
+    class BadSortItem:
+        key = {}
+
+    items = [BadSortItem(), BadSortItem()]
+    assert api._apply_sort(items, _request("")) == items
+    assert api._apply_sort(items, _request("sort=key")) == items
+
+    assert api._parse_page_param("oops", 3) == 3
+
+    class QueryPager:
+        def __init__(self) -> None:
+            self.offset_seen = None
+            self.limit_seen = None
+
+        def all(self) -> list[int]:
+            return [1, 2, 3]
+
+        def offset(self, value: int) -> "QueryPager":
+            self.offset_seen = value
+            return self
+
+        def limit(self, value: int) -> dict[str, int]:
+            self.limit_seen = value
+            return {"limit": value}
+
+    monkeypatch.setattr(safrs.SAFRS, "MAX_PAGE_LIMIT", 2)
+    qp = QueryPager()
+    assert api._apply_pagination(qp, _request("page[offset]=-1&page[limit]=999")) == {"limit": 2}
+    assert qp.offset_seen == 0
+    assert qp.limit_seen == 2
+    assert api._apply_pagination([1, 2, 3], _request("page[limit]=-1")) == [1, 2]
+
+    class QueryOrder(QueryPager):
+        def order_by(self, _expr: Any) -> "QueryOrder":
+            return self
+
+    class BadSortModel:
+        bad = object()
+
+    q = QueryOrder()
+    assert api._apply_sort_query_or_items(FastThing, q, _request("sort=missing")) is q
+    assert api._apply_sort_query_or_items(BadSortModel, q, _request("sort=bad")) is q
+
+
+def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._handle_safrs_exception(JSONAPIHTTPError(400, {"errors": []}))
+
+    class CustomJsonapiError(JsonapiError):
+        status_code = 409
+        message = "conflict"
+
+    with pytest.raises(JSONAPIHTTPError) as jsonapi_exc:
+        api._handle_safrs_exception(CustomJsonapiError())
+    assert jsonapi_exc.value.status_code == 409
+
+    with pytest.raises(JSONAPIHTTPError) as validation_exc:
+        api._handle_safrs_exception(ValidationError("bad payload"))
+    assert validation_exc.value.status_code == 400
+
+    with pytest.raises(RuntimeError):
+        api._handle_safrs_exception(RuntimeError("boom"))
+
+    class ModelValidation:
+        @staticmethod
+        def filter(_raw: str) -> Any:
+            raise ValidationError("invalid")
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._apply_filter(ModelValidation, _request("filter=x"), [])
+
+    class ModelJsonapi:
+        @staticmethod
+        def filter(_raw: str) -> Any:
+            raise CustomJsonapiError()
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._apply_filter(ModelJsonapi, _request("filter=x"), [])
+
+    class ModelRuntime:
+        @staticmethod
+        def filter(_raw: str) -> Any:
+            raise RuntimeError("broken")
+
+    with pytest.raises(RuntimeError):
+        api._apply_filter(ModelRuntime, _request("filter=x"), [])
+
+    class ModelSFilter:
+        @staticmethod
+        def _s_filter(_raw: str) -> list[str]:
+            return ["ok"]
+
+    assert api._apply_filter(ModelSFilter, _request("filter=x"), []) == ["ok"]
+
+    class Target:
+        _s_type = "Target"
+
+        @staticmethod
+        def get_instance(_value: Any) -> Any:
+            return SimpleNamespace(jsonapi_id="7")
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._lookup_related_instance(Target, "not-a-dict")
+    with pytest.raises(JSONAPIHTTPError):
+        api._lookup_related_instance(Target, {}, strict=True)
+    with pytest.raises(JSONAPIHTTPError):
+        api._lookup_related_instance(Target, {}, strict=False)
+    with pytest.raises(JSONAPIHTTPError):
+        api._lookup_related_instance(Target, {"id": "1", "type": "Wrong"})
+
+    class TargetRaising(Target):
+        @staticmethod
+        def get_instance(_value: Any) -> Any:
+            raise RuntimeError("not found")
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._lookup_related_instance(TargetRaising, {"id": "1", "type": "Target"})
+
+    class TargetNone(Target):
+        @staticmethod
+        def get_instance(_value: Any) -> Any:
+            return None
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._lookup_related_instance(TargetNone, {"id": "1", "type": "Target"})
+
+    resolved = api._lookup_related_instance(Target, {"id": "1", "type": "Target"})
+    assert resolved.jsonapi_id == "7"
+
+    class RaisingRemove:
+        def remove(self, _item: Any) -> None:
+            raise RuntimeError("ignore")
+
+    api._clear_relationship(RaisingRemove())
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._append_relationship_item(object(), object())
+    with pytest.raises(JSONAPIHTTPError):
+        api._remove_relationship_item(object(), object())
+
+    api._collect_included(FastThing, SimpleNamespace(), [[], ["missing"]], {}, set(), [])
+    api._collect_included(FastAuthor, SimpleNamespace(books=[None]), [["books"]], {}, set(), [])
+
+    class EncObj:
+        jsonapi_id = 1
+        description = "ok"
+
+        @property
+        def name(self) -> Any:
+            raise RuntimeError("missing")
+
+    encoded = api._encode_resource(FastThing, EncObj())
+    assert encoded["attributes"]["name"] is None
+
+
+def test_fastapi_relationship_handler_branch_errors(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+    req = _request("")
+
+    with pytest.raises(JSONAPIHTTPError):
+        api._get_relationship(FastBook, "invalid")(1, req)
+    with pytest.raises(JSONAPIHTTPError):
+        api._get_relationship_item(FastAuthor, "books")(1, "9999", req)
+    with pytest.raises(JSONAPIHTTPError):
+        api._patch_relationship(FastBook, "author")(1, {"data": "bad"})
+    with pytest.raises(JSONAPIHTTPError):
+        api._post_relationship(FastAuthor, "books")(1, {"data": "bad"})
+    with pytest.raises(JSONAPIHTTPError):
+        api._delete_relationship(FastAuthor, "books")(1, {"data": "bad"})
+    with pytest.raises(JSONAPIHTTPError):
+        api._delete_relationship(FastBook, "author")(1, {"data": [1]})
