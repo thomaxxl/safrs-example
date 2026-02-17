@@ -1,5 +1,6 @@
 import datetime
 import pytest
+from sqlalchemy import event
 
 from sqlalchemy.orm import scoped_session
 from sqlalchemy.orm import sessionmaker
@@ -61,24 +62,26 @@ def connection(database):
 
 @pytest.fixture(autouse=True)
 def db_session(connection,scope="session"):
-    if _connection_fixture_connection and _connection_fixture_connection.in_transaction():
-        # not needed when connection scope="function"
-        transaction = _connection_fixture_connection.get_transaction()
-        transaction.rollback()
-    # Start a transaction
+    # Outer transaction (rolled back at end of test)
     transaction = connection.begin()
 
-    # Start a scoped session (i.e it'll be closed after current application context)
+    # Session bound to the connection
     session_factory = sessionmaker(bind=connection)
     session = scoped_session(session_factory)
-    #session = db.create_scoped_session(options={"bind": connection, "binds": {}})
-
-    # Put our session on the db object for the codebase to use
     db.session = session
+
+    # Start a SAVEPOINT so application commit/rollback doesn't end the outer transaction
+    session().begin_nested()
+
+    @event.listens_for(session(), "after_transaction_end")
+    def _restart_savepoint(sess, trans):
+        # Restart the SAVEPOINT after commit/rollback of the nested transaction
+        if trans.nested and not trans._parent.nested:
+            sess.begin_nested()
 
     yield session
 
-    # Rollback the whole transaction after each test
+    session.remove()
     transaction.rollback()
 
 
