@@ -1,7 +1,6 @@
-version: '3.6'
 services:
   psql:
-    image: postgres:alpine
+    image: postgres:16-alpine
     container_name: psql
     ports:
       - 54321:5432
@@ -10,9 +9,11 @@ services:
       - develop
     environment:
         POSTGRES_PASSWORD: password
+    volumes:
+      - ./init-db:/docker-entrypoint-initdb.d
   mysql:
     image: mysql:8.0
-    container_name: mysql
+    container_name: mysql-safrs
     command: --default-authentication-plugin=mysql_native_password
     ports:
       - 33061:3306
