@@ -232,12 +232,12 @@ def test_fastapi_delete_toone_relationship_is_idempotent(fastapi_client: TestCli
     data = current_author.json()["data"]
 
     delete_payload = {"data": {"type": data["type"], "id": data["id"]}}
-    delete_one = fastapi_client.delete("/FastBooks/1/author", json=delete_payload)
+    delete_one = fastapi_client.request("DELETE", "/FastBooks/1/author", json=delete_payload)
     assert delete_one.status_code == 204
 
     after_delete = fastapi_client.get("/FastBooks/1/author")
     assert after_delete.status_code == 404
 
     delete_payload_list = {"data": [delete_payload["data"]]}
-    delete_two = fastapi_client.delete("/FastBooks/1/author", json=delete_payload_list)
+    delete_two = fastapi_client.request("DELETE", "/FastBooks/1/author", json=delete_payload_list)
     assert delete_two.status_code == 204
