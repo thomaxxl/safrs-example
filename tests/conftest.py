@@ -1,9 +1,11 @@
+import os
+from urllib.parse import parse_qsl
 import datetime
 import pytest
 
 from sqlalchemy.orm import scoped_session
 from sqlalchemy.orm import sessionmaker
-from app import create_app, create_api
+from app import create_app, create_api, create_fastapi_api
 from app.base_model import db
 from tests.helpers.db import clean_database, create_database
 from tests.factories import (
@@ -30,6 +32,70 @@ class SafrsClient(FlaskClient):
         headers.extend(custom_headers)
         kwargs['headers'] = headers
         return super().open(*args, **kwargs)
+
+
+class RespWrap:
+    def __init__(self, response):
+        self._response = response
+        self.status_code = response.status_code
+        self.headers = response.headers
+        self.data = response.content
+
+    def get_json(self):
+        return self._response.json()
+
+    @property
+    def json(self):
+        return self._response.json()
+
+
+class FastAPICompatClient:
+    def __init__(self, client):
+        self._client = client
+
+    @staticmethod
+    def _merge_headers(headers):
+        merged = {"Content-Type": "application/vnd.api+json; ext=bulk"}
+        if headers:
+            merged.update(dict(headers))
+        return merged
+
+    @staticmethod
+    def _normalize_query(query_string):
+        if query_string is None:
+            return None
+        if isinstance(query_string, str):
+            return parse_qsl(query_string, keep_blank_values=True)
+        return query_string
+
+    def open(self, path, method="GET", query_string=None, headers=None, **kwargs):
+        response = self._client.request(
+            method.upper(),
+            path,
+            params=self._normalize_query(query_string),
+            headers=self._merge_headers(headers),
+            **kwargs,
+        )
+        return RespWrap(response)
+
+    def get(self, path, **kwargs):
+        return self.open(path, method="GET", **kwargs)
+
+    def post(self, path, **kwargs):
+        return self.open(path, method="POST", **kwargs)
+
+    def patch(self, path, **kwargs):
+        return self.open(path, method="PATCH", **kwargs)
+
+    def delete(self, path, **kwargs):
+        return self.open(path, method="DELETE", **kwargs)
+
+    def request(self, method, path, **kwargs):
+        return self.open(path, method=method, **kwargs)
+
+
+def _selected_backend():
+    return os.getenv("SAFRS_BACKEND", "flask").strip().lower()
 
 
 @pytest.fixture(scope="session")
@@ -93,14 +159,25 @@ def db_session(connection,scope="session"):
 @pytest.fixture(scope="session", autouse=True)
 def api(app, database):
     """Init SAFRS"""
+    backend = _selected_backend()
+    if backend == "fastapi":
+        pytest.importorskip("fastapi")
+        return create_fastapi_api()
+
     create_api(app)
 
 
 @pytest.fixture(scope="session")
 def client(app, api):
     """Setup an flask app client, yields an flask app client"""
-    headers = {}
-    headers["Content-Type"] = "application/vnd.api+json; ext=bulk"
+    backend = _selected_backend()
+    if backend == "fastapi":
+        pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        with TestClient(api) as c:
+            yield FastAPICompatClient(c)
+        return
 
     app.test_client_class = SafrsClient
     with app.test_client() as c:

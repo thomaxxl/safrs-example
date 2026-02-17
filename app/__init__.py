@@ -75,3 +75,9 @@ def run_app():
     with app.app_context():
         create_api(app, app.config["SWAGGER_HOST"], app.config["SWAGGER_PORT"])
     return app
+
+
+def create_fastapi_api():
+    from app.fastapi_app import create_fastapi_api as _create_fastapi_api
+
+    return _create_fastapi_api()
