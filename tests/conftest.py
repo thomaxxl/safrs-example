@@ -128,6 +128,7 @@ def connection(database):
 @pytest.fixture(autouse=True)
 def db_session(connection,scope="session"):
     original_session = db.session
+    backend = _selected_backend()
 
     # Outer transaction (rolled back at end of test)
     transaction = connection.begin()
@@ -145,7 +146,13 @@ def db_session(connection,scope="session"):
         expire_on_commit=False,
         join_transaction_mode="create_savepoint",
     )
-    session = scoped_session(session_factory)
+    if backend == "fastapi":
+        # FastAPI's TestClient serves requests from a different thread than pytest.
+        # Use a fixed scope key so request handling and test code share one session
+        # and one nested transaction stack.
+        session = scoped_session(session_factory, scopefunc=lambda: 1)
+    else:
+        session = scoped_session(session_factory)
     db.session = session
 
     try:
@@ -159,12 +166,15 @@ def db_session(connection,scope="session"):
 @pytest.fixture(scope="session", autouse=True)
 def api(app, database):
     """Init SAFRS"""
+    create_api(app)
+
     backend = _selected_backend()
     if backend == "fastapi":
         pytest.importorskip("fastapi")
-        return create_fastapi_api()
+        from safrs.safrs_api import SAFRSJSONEncoder
 
-    create_api(app)
+        app.json_encoder = SAFRSJSONEncoder  # type: ignore[attr-defined]
+    return None
 
 
 @pytest.fixture(scope="session")
@@ -175,13 +185,28 @@ def client(app, api):
         pytest.importorskip("fastapi")
         from fastapi.testclient import TestClient
 
-        with TestClient(api) as c:
+        fastapi_app = create_fastapi_api(seed_data=False)
+        with TestClient(fastapi_app, raise_server_exceptions=False) as c:
             yield FastAPICompatClient(c)
         return
 
     app.test_client_class = SafrsClient
     with app.test_client() as c:
         yield c
+
+
+@pytest.fixture(scope="session", autouse=True)
+def flask_request_context(app, api):
+    if _selected_backend() != "fastapi":
+        yield
+        return
+
+    ctx = app.test_request_context("/")
+    ctx.push()
+    try:
+        yield
+    finally:
+        ctx.pop()
 
 
 @pytest.fixture(scope="function")

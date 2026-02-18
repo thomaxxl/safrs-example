@@ -77,7 +77,7 @@ def run_app():
     return app
 
 
-def create_fastapi_api():
+def create_fastapi_api(seed_data=True):
     from app.fastapi_app import create_fastapi_api as _create_fastapi_api
 
-    return _create_fastapi_api()
+    return _create_fastapi_api(seed_data=seed_data)
