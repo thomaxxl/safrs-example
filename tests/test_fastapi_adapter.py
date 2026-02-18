@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from typing import Any, Generator
 
@@ -15,7 +16,8 @@ from sqlalchemy.pool import StaticPool
 pytest.importorskip("fastapi")
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-from safrs.fastapi.api import JSONAPIHTTPError, SafrsFastAPI
+from safrs.fastapi.api import JSONAPIHTTPError, JSONAPI_MEDIA_TYPE, SafrsFastAPI
+from safrs.fastapi.responses import JSONAPIResponse
 
 
 Base = declarative_base()
@@ -72,6 +74,31 @@ def _request(query: str = "") -> Request:
             "query_string": query.encode(),
         }
     )
+
+
+def _response_schema_ref(operation: dict[str, Any], status_code: str) -> str:
+    response = operation["responses"][status_code]
+    content = response.get("content", {})
+    if JSONAPI_MEDIA_TYPE in content:
+        return content[JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    if "application/json" in content:
+        return content["application/json"]["schema"]["$ref"]
+    first_media = next(iter(content.values()))
+    return first_media["schema"]["$ref"]
+
+
+def _query_param_names(operation: dict[str, Any]) -> set[str]:
+    return {
+        str(parameter.get("name"))
+        for parameter in operation.get("parameters", [])
+        if parameter.get("in") == "query"
+    }
+
+
+def _json_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, JSONAPIResponse):
+        return json.loads(value.body.decode())
+    return value
 
 
 @pytest.fixture()
@@ -161,6 +188,88 @@ def test_fastapi_swagger_alias_and_slash_parity(fastapi_client: TestClient) -> N
 
     with_slash = fastapi_client.get("/FastThings/")
     assert with_slash.status_code == 200
+
+
+def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) -> None:
+    response = fastapi_client.get("/openapi.json")
+    assert response.status_code == 200
+    openapi = response.json()
+
+    schemas = openapi["components"]["schemas"]
+    assert "FastThingAttributes" in schemas
+    assert "FastThingResource" in schemas
+    assert "FastThingDocumentSingle" in schemas
+    assert "FastThingDocumentCollection" in schemas
+    assert "FastBookRelationships" in schemas
+    assert "JsonApiErrorDocument" in schemas
+
+    paths = openapi["paths"]
+    things_get = paths["/FastThings"]["get"]
+    things_post = paths["/FastThings"]["post"]
+    thing_patch = paths["/FastThings/{object_id}"]["patch"]
+
+    assert _response_schema_ref(things_get, "200").endswith("/FastThingDocumentCollection")
+    assert _response_schema_ref(things_post, "201").endswith("/FastThingDocumentSingle")
+    assert _response_schema_ref(thing_patch, "200").endswith("/FastThingDocumentSingle")
+    assert _response_schema_ref(things_get, "400").endswith("/JsonApiErrorDocument")
+
+    post_request_ref = things_post["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    patch_request_ref = thing_patch["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    assert post_request_ref.endswith("/FastThingDocumentCreate")
+    assert patch_request_ref.endswith("/FastThingDocumentPatch")
+    assert "204" in paths["/FastThings/{object_id}"]["delete"]["responses"]
+
+
+def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage_for_mutations(
+    fastapi_client: TestClient,
+) -> None:
+    response = fastapi_client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+
+    author_rel = paths["/FastBooks/{object_id}/author"]
+    books_rel = paths["/FastAuthors/{object_id}/books"]
+    books_rel_item = paths["/FastAuthors/{object_id}/books/{target_id}"]
+
+    assert _response_schema_ref(author_rel["get"], "200").endswith("/FastAuthorDocumentSingle")
+    assert _response_schema_ref(books_rel["get"], "200").endswith("/FastBookDocumentCollection")
+    assert _response_schema_ref(books_rel_item["get"], "200").endswith("/FastBookDocumentSingle")
+
+    author_patch_ref = author_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    author_post_ref = author_rel["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    books_patch_ref = books_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    books_post_ref = books_rel["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    books_delete_ref = books_rel["delete"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    assert author_patch_ref.endswith("/FastAuthorRelationshipDocumentToOne")
+    assert author_post_ref.endswith("/FastAuthorRelationshipDocumentToOne")
+    assert books_patch_ref.endswith("/FastBookRelationshipDocumentToMany")
+    assert books_post_ref.endswith("/FastBookRelationshipDocumentToMany")
+    assert books_delete_ref.endswith("/FastBookRelationshipDocumentToMany")
+
+
+def test_fastapi_openapi_jsonapi_query_params_documented(fastapi_client: TestClient) -> None:
+    response = fastapi_client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+
+    collection_get = paths["/FastThings"]["get"]
+    collection_params = _query_param_names(collection_get)
+    assert {"include", "fields[FastThing]", "page[offset]", "page[limit]", "sort", "filter"} <= collection_params
+    assert "filter[name]" in collection_params
+    assert "filter[description]" in collection_params
+
+    instance_get = paths["/FastThings/{object_id}"]["get"]
+    instance_params = _query_param_names(instance_get)
+    assert {"include", "fields[FastThing]"} <= instance_params
+
+    rel_get = paths["/FastAuthors/{object_id}/books"]["get"]
+    rel_params = _query_param_names(rel_get)
+    assert {"include", "fields[FastBook]", "page[offset]", "page[limit]", "sort", "filter"} <= rel_params
+    assert "filter[title]" in rel_params
+
+    post_collection = paths["/FastThings"]["post"]
+    post_params = _query_param_names(post_collection)
+    assert {"include", "fields[FastThing]"} <= post_params
 
 
 def test_fastapi_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:
@@ -427,6 +536,15 @@ def test_fastapi_internal_helper_branches(monkeypatch: pytest.MonkeyPatch, fasta
     assert api._apply_sort_query_or_items(BadSortModel, q, _request("sort=bad")) is q
 
 
+def test_fastapi_schema_registry_respects_relationship_toggle() -> None:
+    from safrs.fastapi.schemas.registry import SchemaRegistry
+
+    registry = SchemaRegistry(document_relationships=False)
+    resource_model = registry.resource(FastBook)
+    schema = resource_model.model_json_schema()
+    assert "relationships" not in schema["properties"]
+
+
 def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> None:
     api = fastapi_client.app.state.safrs_api
 
@@ -683,7 +801,7 @@ def test_fastapi_internal_parse_and_instance_error_branches(monkeypatch: pytest.
     assert any(item["type"] == "FastBook" for item in included)
     assert any(item["type"] == "FastAuthor" for item in included)
 
-    inst = api._get_instance(FastAuthor)(str(author.id), _request("include=books"))
+    inst = _json_payload(api._get_instance(FastAuthor)(str(author.id), _request("include=books")))
     assert "included" in inst
 
     class BrokenModel:
@@ -769,16 +887,16 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
     with pytest.raises(JSONAPIHTTPError):
         api._delete_instance(DeleteJSONAPIModel)("1")
 
-    rel_item = api._get_relationship_item(FastAuthor, "books")(str(author1.id), str(book_one.id), _request(""))
+    rel_item = _json_payload(api._get_relationship_item(FastAuthor, "books")(str(author1.id), str(book_one.id), _request("")))
     assert rel_item["data"]["id"] == str(book_one.id)
 
     with pytest.raises(JSONAPIHTTPError):
         api._get_relationship_item(FastBook, "unknown_rel")("1", "1", _request(""))
 
-    patched_many = api._patch_relationship(FastAuthor, "books")(
+    patched_many = _json_payload(api._patch_relationship(FastAuthor, "books")(
         str(author1.id),
         {"data": [{"type": "FastBook", "id": str(book_other.id)}]},
-    )
+    ))
     assert patched_many["meta"]["count"] == 1
 
     patched_toone_none = api._patch_relationship(FastBook, "author")(str(book_other.id), {"data": None})
@@ -799,10 +917,10 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         {"data": [{"type": "FastBook", "id": str(book_other.id)}]},
     )
     assert posted_many.status_code == 204
-    posted_toone = api._post_relationship(FastBook, "author")(
+    posted_toone = _json_payload(api._post_relationship(FastBook, "author")(
         str(book_other.id),
         {"data": {"type": "FastAuthor", "id": str(author1.id)}},
-    )
+    ))
     assert posted_toone["data"]["type"] == "FastAuthor"
 
     with pytest.raises(JSONAPIHTTPError):
