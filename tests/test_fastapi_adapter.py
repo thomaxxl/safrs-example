@@ -275,6 +275,21 @@ def test_fastapi_openapi_jsonapi_query_params_documented(fastapi_client: TestCli
     assert {"include", "fields[FastThing]"} <= post_params
 
 
+def test_fastapi_openapi_rpc_query_params_and_tags_documented(fastapi_client: TestClient) -> None:
+    response = fastapi_client.get("/openapi.json")
+    assert response.status_code == 200
+    spec = response.json()
+    paths = spec["paths"]
+
+    class_rpc_post = paths["/FastAuthors/lookup_by_name"]["post"]
+    class_rpc_params = _query_param_names(class_rpc_post)
+    assert {"include", "fields[FastAuthor]", "page[offset]", "page[limit]"} <= class_rpc_params
+
+    tags = {str(tag.get("name")): str(tag.get("description", "")) for tag in spec.get("tags", [])}
+    assert "FastAuthors" in tags
+    assert tags["FastAuthors"]
+
+
 def test_fastapi_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:
     response = fastapi_client.get("/FastBooks?include=invalid_rel")
     assert response.status_code == 400

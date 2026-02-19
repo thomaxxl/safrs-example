@@ -39,6 +39,7 @@ def test_spec_parity_level1_operations_status_and_media(specs: tuple[dict[str, A
     fastapi_internal = load_openapi3_as_internal(fastapi_spec)
 
     assert report["missing_operations"] == []
+    assert report["missing_tags"] == []
     assert report["missing_request_body"] == []
 
     create_op = fastapi_internal["operations"][(canonical_path("/api/People"), "post")]
@@ -54,8 +55,11 @@ def test_spec_parity_level1_operations_status_and_media(specs: tuple[dict[str, A
 
 def test_spec_parity_level2_core_query_parameters(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:
     flask_spec, fastapi_spec = specs
+    report = diff_openapi_documents(flask_spec, fastapi_spec)
     flask_internal = load_swagger2_as_internal(flask_spec)
     fastapi_internal = load_openapi3_as_internal(fastapi_spec)
+
+    assert report["missing_parameters"] == []
 
     core_operations = [
         ("/api/People", "get"),
