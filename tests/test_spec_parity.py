@@ -124,6 +124,18 @@ def test_spec_parity_to_one_relationships_do_not_expose_post(specs: tuple[dict[s
         assert rel_post not in fastapi_internal["operations"]
 
 
+def test_spec_parity_relationship_item_paths_not_documented(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    _flask_spec, fastapi_spec = specs
+    paths = fastapi_spec.get("paths", {})
+
+    assert "/api/Books/{object_id}/author/{target_id}" not in paths
+    assert "/api/Books/{object_id}/publisher/{target_id}" not in paths
+    assert "/api/People/{object_id}/books_read/{target_id}" not in paths
+    assert "/api/People/{object_id}/friends/{target_id}" not in paths
+    assert "/api/Publishers/{object_id}/books/{target_id}" not in paths
+    assert "/api/Reviews/{object_id}/reader/{target_id}" not in paths
+
+
 def test_spec_parity_hidden_relationships_not_documented(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:
     _flask_spec, fastapi_spec = specs
     paths = fastapi_spec.get("paths", {})

@@ -17,7 +17,13 @@ pytest.importorskip("fastapi")
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
-from safrs.fastapi.api import JSONAPIHTTPError, JSONAPI_MEDIA_TYPE, SafrsFastAPI, install_jsonapi_exception_handlers
+from safrs.fastapi.api import (
+    JSONAPIHTTPError,
+    JSONAPI_MEDIA_TYPE,
+    RelationshipItemMode,
+    SafrsFastAPI,
+    install_jsonapi_exception_handlers,
+)
 from safrs.fastapi.responses import JSONAPIResponse
 
 
@@ -333,15 +339,21 @@ def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage
 
     author_rel = paths["/FastBooks/{object_id}/author"]
     books_rel = paths["/FastAuthors/{object_id}/books"]
-    books_rel_item = paths["/FastAuthors/{object_id}/books/{target_id}"]
 
     assert _response_schema_ref(author_rel["get"], "200").endswith("/FastAuthorDocumentSingle")
     assert _response_schema_ref(books_rel["get"], "200").endswith("/FastBookDocumentCollection")
-    assert _response_schema_ref(books_rel_item["get"], "200").endswith("/FastBookDocumentSingle")
+    assert "/FastAuthors/{object_id}/books/{target_id}" not in paths
     assert "post" not in author_rel
     assert "patch" in author_rel
     assert "delete" in author_rel
     assert "post" in books_rel
+
+    author_id = fastapi_client.get("/FastAuthors").json()["data"][0]["id"]
+    rel_items = fastapi_client.get(f"/FastAuthors/{author_id}/books").json()["data"]
+    rel_item_id = rel_items[0]["id"]
+    rel_item_response = fastapi_client.get(f"/FastAuthors/{author_id}/books/{rel_item_id}")
+    assert rel_item_response.status_code == 200
+    assert rel_item_response.json()["data"]["id"] == rel_item_id
 
     author_patch_ref = author_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     books_patch_ref = books_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
@@ -351,6 +363,58 @@ def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage
     assert books_patch_ref.endswith("/FastBookRelationshipDocumentToMany")
     assert books_post_ref.endswith("/FastBookRelationshipDocumentToMany")
     assert books_delete_ref.endswith("/FastBookRelationshipDocumentToMany")
+
+
+@pytest.mark.parametrize(
+    ("mode", "expect_in_schema", "expect_status"),
+    [
+        (RelationshipItemMode.ENABLED, True, 200),
+        (RelationshipItemMode.HIDDEN, False, 200),
+        (RelationshipItemMode.DISABLED, False, 404),
+    ],
+)
+def test_fastapi_relationship_item_mode_controls_schema_and_runtime(
+    mode: RelationshipItemMode,
+    expect_in_schema: bool,
+    expect_status: int,
+) -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        author = FastAuthor(name="mode-author")
+        book = FastBook(title="mode-book", author=author)
+        Session.add_all([author, book])
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app, relationship_item_mode=mode)
+        api.expose_object(FastAuthor)
+        api.expose_object(FastBook)
+
+        with TestClient(app) as client:
+            item_path = "/FastAuthors/{object_id}/books/{target_id}"
+            paths = client.get("/openapi.json").json()["paths"]
+            assert (item_path in paths) is expect_in_schema
+
+            author_id = client.get("/FastAuthors").json()["data"][0]["id"]
+            rel_items = client.get(f"/FastAuthors/{author_id}/books").json()["data"]
+            rel_item_id = rel_items[0]["id"]
+            rel_item_response = client.get(f"/FastAuthors/{author_id}/books/{rel_item_id}")
+            assert rel_item_response.status_code == expect_status
+            if expect_status == 200:
+                assert rel_item_response.json()["data"]["id"] == rel_item_id
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
 
 
 def test_fastapi_openapi_jsonapi_query_params_documented(fastapi_client: TestClient) -> None:
