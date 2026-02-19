@@ -278,3 +278,19 @@ def test_delete_thing(client, mock_thing, db_session):
     # Check thing was deleted from the DB.
     deleted_thing = db_session.query(models.Thing).filter(models.Thing.id == mock_thing.id).one_or_none()
     assert deleted_thing is None
+
+
+def test_create_review_with_empty_created_returns_bad_request(client):
+    payload = {
+        "data": {
+            "type": "Review",
+            "id": "1fabc541-00f6-4d5f-92fa-b9385273a105_1",
+            "attributes": {"book_id": "", "created": "", "reader_id": 0, "review": ""},
+        }
+    }
+
+    res = client.post("/Reviews/", json=payload)
+    assert res.status_code == 400
+
+    result = res.get_json()
+    assert "Invalid value" in result["errors"][0]["detail"]
