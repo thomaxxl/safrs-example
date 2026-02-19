@@ -238,8 +238,17 @@ def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) 
 
     post_request_ref = things_post["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     patch_request_ref = thing_patch["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    post_example = things_post["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    patch_example = thing_patch["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
     assert post_request_ref.endswith("/FastThingDocumentCreate")
     assert patch_request_ref.endswith("/FastThingDocumentPatch")
+    assert isinstance(post_example, dict)
+    assert post_example["data"]["type"] == "FastThing"
+    assert "attributes" in post_example["data"]
+    assert isinstance(patch_example, dict)
+    assert patch_example["data"]["type"] == "FastThing"
+    assert "id" in patch_example["data"]
+    assert "attributes" in patch_example["data"]
     assert "204" in paths["/FastThings/{object_id}"]["delete"]["responses"]
     assert JSONAPI_MEDIA_TYPE in things_post["responses"]["422"]["content"]
     assert things_post["responses"]["422"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"].endswith("/JsonApiErrorDocument")
@@ -359,10 +368,50 @@ def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage
     books_patch_ref = books_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     books_post_ref = books_rel["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     books_delete_ref = books_rel["delete"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    author_patch_example = author_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    books_patch_example = books_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
     assert author_patch_ref.endswith("/FastAuthorRelationshipDocumentToOne")
     assert books_patch_ref.endswith("/FastBookRelationshipDocumentToMany")
     assert books_post_ref.endswith("/FastBookRelationshipDocumentToMany")
     assert books_delete_ref.endswith("/FastBookRelationshipDocumentToMany")
+    assert isinstance(author_patch_example, dict)
+    assert author_patch_example["data"]["type"] == "FastAuthor"
+    assert "id" in author_patch_example["data"]
+    assert isinstance(books_patch_example, dict)
+    assert isinstance(books_patch_example["data"], list)
+    assert books_patch_example["data"][0]["type"] == "FastBook"
+    assert "id" in books_patch_example["data"][0]
+
+
+def test_fastapi_openapi_examples_can_be_disabled() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        Session.add(FastThing(name="example-off", description="off"))
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app, include_examples_in_openapi=False)
+        api.expose_object(FastThing)
+
+        with TestClient(app) as client:
+            paths = client.get("/openapi.json").json()["paths"]
+            post_content = paths["/FastThings"]["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]
+            patch_content = paths["/FastThings/{object_id}"]["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]
+            assert "example" not in post_content
+            assert "example" not in patch_content
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
 
 
 @pytest.mark.parametrize(

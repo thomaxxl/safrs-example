@@ -136,6 +136,39 @@ def test_spec_parity_relationship_item_paths_not_documented(specs: tuple[dict[st
     assert "/api/Reviews/{object_id}/reader/{target_id}" not in paths
 
 
+def test_spec_parity_openapi_request_body_examples_present(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    _flask_spec, fastapi_spec = specs
+    paths = fastapi_spec.get("paths", {})
+
+    people_post = paths["/api/People"]["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]
+    people_patch = paths["/api/People/{object_id}"]["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]
+    books_read_patch = paths["/api/People/{object_id}/books_read"]["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]
+    author_patch = paths["/api/Books/{object_id}/author"]["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]
+
+    people_post_example = people_post.get("example")
+    people_patch_example = people_patch.get("example")
+    books_read_patch_example = books_read_patch.get("example")
+    author_patch_example = author_patch.get("example")
+
+    assert isinstance(people_post_example, dict)
+    assert people_post_example["data"]["type"] == "Person"
+    assert "attributes" in people_post_example["data"]
+
+    assert isinstance(people_patch_example, dict)
+    assert people_patch_example["data"]["type"] == "Person"
+    assert "id" in people_patch_example["data"]
+    assert "attributes" in people_patch_example["data"]
+
+    assert isinstance(books_read_patch_example, dict)
+    assert isinstance(books_read_patch_example["data"], list)
+    assert books_read_patch_example["data"][0]["type"] == "Book"
+    assert "id" in books_read_patch_example["data"][0]
+
+    assert isinstance(author_patch_example, dict)
+    assert author_patch_example["data"]["type"] == "Person"
+    assert "id" in author_patch_example["data"]
+
+
 def test_spec_parity_hidden_relationships_not_documented(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:
     _flask_spec, fastapi_spec = specs
     paths = fastapi_spec.get("paths", {})
