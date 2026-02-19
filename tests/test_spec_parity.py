@@ -88,3 +88,22 @@ def test_spec_parity_respects_model_http_methods(specs: tuple[dict[str, Any], di
     assert delete_op not in fastapi_internal["operations"]
     assert get_op in flask_internal["operations"]
     assert get_op in fastapi_internal["operations"]
+
+
+def test_spec_parity_hidden_relationships_not_documented(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    _flask_spec, fastapi_spec = specs
+    paths = fastapi_spec.get("paths", {})
+
+    assert "/api/People/{object_id}/employer" not in paths
+    assert "/api/People/{object_id}/employer/{target_id}" not in paths
+    assert "/api/Publishers/{object_id}/employees" not in paths
+    assert "/api/Publishers/{object_id}/employees/{target_id}" not in paths
+
+    schemas = fastapi_spec.get("components", {}).get("schemas", {})
+    person_relationships = schemas.get("PersonRelationships", {})
+    publisher_relationships = schemas.get("PublisherRelationships", {})
+    person_props = person_relationships.get("properties", {})
+    publisher_props = publisher_relationships.get("properties", {})
+
+    assert "employer" not in person_props
+    assert "employees" not in publisher_props
