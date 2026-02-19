@@ -72,3 +72,19 @@ def test_spec_parity_level2_core_query_parameters(specs: tuple[dict[str, Any], d
         flask_query = _operation_query_names(flask_internal, path, method)
         fastapi_query = _operation_query_names(fastapi_internal, path, method)
         assert flask_query <= fastapi_query
+
+
+def test_spec_parity_respects_model_http_methods(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    flask_spec, fastapi_spec = specs
+    flask_internal = load_swagger2_as_internal(flask_spec)
+    fastapi_internal = load_openapi3_as_internal(fastapi_spec)
+    patch_op = (canonical_path("/api/Reviews/{}"), "patch")
+    delete_op = (canonical_path("/api/Reviews/{}"), "delete")
+    get_op = (canonical_path("/api/Reviews/{}"), "get")
+
+    assert patch_op not in flask_internal["operations"]
+    assert delete_op not in flask_internal["operations"]
+    assert patch_op not in fastapi_internal["operations"]
+    assert delete_op not in fastapi_internal["operations"]
+    assert get_op in flask_internal["operations"]
+    assert get_op in fastapi_internal["operations"]
