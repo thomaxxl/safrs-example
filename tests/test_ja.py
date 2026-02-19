@@ -558,9 +558,10 @@ def test_post_book_author(client):
     assert res.status_code == 404
     json = { "data" : { "type" : author_type, "id" : author_id }}
     res = client.post(f"/Books/{book_id}/author", json=json)
-    response_data = res.get_json()["data"]
-    assert response_data["id"] == author_id
-    assert res.status_code == 200
+    assert res.status_code == 405
+    assert "errors" in res.get_json()
+    res = client.patch(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 204
     res = client.get(f"/Books/{book_id}/author")
     response_data = res.get_json()
     author = response_data["data"]

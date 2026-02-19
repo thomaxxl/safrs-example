@@ -78,16 +78,50 @@ def test_spec_parity_respects_model_http_methods(specs: tuple[dict[str, Any], di
     flask_spec, fastapi_spec = specs
     flask_internal = load_swagger2_as_internal(flask_spec)
     fastapi_internal = load_openapi3_as_internal(fastapi_spec)
-    patch_op = (canonical_path("/api/Reviews/{}"), "patch")
-    delete_op = (canonical_path("/api/Reviews/{}"), "delete")
-    get_op = (canonical_path("/api/Reviews/{}"), "get")
+    review_get = (canonical_path("/api/Reviews/{}"), "get")
+    review_patch = (canonical_path("/api/Reviews/{}"), "patch")
+    review_delete = (canonical_path("/api/Reviews/{}"), "delete")
 
-    assert patch_op not in flask_internal["operations"]
-    assert delete_op not in flask_internal["operations"]
-    assert patch_op not in fastapi_internal["operations"]
-    assert delete_op not in fastapi_internal["operations"]
-    assert get_op in flask_internal["operations"]
-    assert get_op in fastapi_internal["operations"]
+    assert review_patch not in flask_internal["operations"]
+    assert review_delete not in flask_internal["operations"]
+    assert review_patch not in fastapi_internal["operations"]
+    assert review_delete not in fastapi_internal["operations"]
+    assert review_get in flask_internal["operations"]
+    assert review_get in fastapi_internal["operations"]
+
+    for rel_path in ("/api/Reviews/{}/book", "/api/Reviews/{}/reader"):
+        review_rel_get = (canonical_path(rel_path), "get")
+        review_rel_patch = (canonical_path(rel_path), "patch")
+        review_rel_post = (canonical_path(rel_path), "post")
+        review_rel_delete = (canonical_path(rel_path), "delete")
+        assert review_rel_get in flask_internal["operations"]
+        assert review_rel_patch not in flask_internal["operations"]
+        assert review_rel_post not in flask_internal["operations"]
+        assert review_rel_delete not in flask_internal["operations"]
+        assert review_rel_get in fastapi_internal["operations"]
+        assert review_rel_patch not in fastapi_internal["operations"]
+        assert review_rel_post not in fastapi_internal["operations"]
+        assert review_rel_delete not in fastapi_internal["operations"]
+
+
+def test_spec_parity_to_one_relationships_do_not_expose_post(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    flask_spec, fastapi_spec = specs
+    flask_internal = load_swagger2_as_internal(flask_spec)
+    fastapi_internal = load_openapi3_as_internal(fastapi_spec)
+
+    for rel_path in ("/api/Books/{}/author", "/api/Books/{}/publisher"):
+        rel_get = (canonical_path(rel_path), "get")
+        rel_patch = (canonical_path(rel_path), "patch")
+        rel_delete = (canonical_path(rel_path), "delete")
+        rel_post = (canonical_path(rel_path), "post")
+        assert rel_get in flask_internal["operations"]
+        assert rel_patch in flask_internal["operations"]
+        assert rel_delete in flask_internal["operations"]
+        assert rel_post not in flask_internal["operations"]
+        assert rel_get in fastapi_internal["operations"]
+        assert rel_patch in fastapi_internal["operations"]
+        assert rel_delete in fastapi_internal["operations"]
+        assert rel_post not in fastapi_internal["operations"]
 
 
 def test_spec_parity_hidden_relationships_not_documented(specs: tuple[dict[str, Any], dict[str, Any]]) -> None:

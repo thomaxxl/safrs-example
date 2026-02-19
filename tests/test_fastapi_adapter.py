@@ -338,14 +338,16 @@ def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage
     assert _response_schema_ref(author_rel["get"], "200").endswith("/FastAuthorDocumentSingle")
     assert _response_schema_ref(books_rel["get"], "200").endswith("/FastBookDocumentCollection")
     assert _response_schema_ref(books_rel_item["get"], "200").endswith("/FastBookDocumentSingle")
+    assert "post" not in author_rel
+    assert "patch" in author_rel
+    assert "delete" in author_rel
+    assert "post" in books_rel
 
     author_patch_ref = author_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
-    author_post_ref = author_rel["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     books_patch_ref = books_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     books_post_ref = books_rel["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     books_delete_ref = books_rel["delete"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     assert author_patch_ref.endswith("/FastAuthorRelationshipDocumentToOne")
-    assert author_post_ref.endswith("/FastAuthorRelationshipDocumentToOne")
     assert books_patch_ref.endswith("/FastBookRelationshipDocumentToMany")
     assert books_post_ref.endswith("/FastBookRelationshipDocumentToMany")
     assert books_delete_ref.endswith("/FastBookRelationshipDocumentToMany")
