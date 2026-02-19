@@ -16,7 +16,8 @@ from sqlalchemy.pool import StaticPool
 pytest.importorskip("fastapi")
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-from safrs.fastapi.api import JSONAPIHTTPError, JSONAPI_MEDIA_TYPE, SafrsFastAPI
+from pydantic import BaseModel
+from safrs.fastapi.api import JSONAPIHTTPError, JSONAPI_MEDIA_TYPE, SafrsFastAPI, install_jsonapi_exception_handlers
 from safrs.fastapi.responses import JSONAPIResponse
 
 
@@ -218,6 +219,8 @@ def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) 
     assert post_request_ref.endswith("/FastThingDocumentCreate")
     assert patch_request_ref.endswith("/FastThingDocumentPatch")
     assert "204" in paths["/FastThings/{object_id}"]["delete"]["responses"]
+    assert JSONAPI_MEDIA_TYPE in things_post["responses"]["422"]["content"]
+    assert things_post["responses"]["422"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"].endswith("/JsonApiErrorDocument")
 
 
 def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage_for_mutations(
@@ -340,6 +343,49 @@ def test_fastapi_validation_errors_for_post_and_patch(fastapi_client: TestClient
     )
     assert invalid_patch.status_code == 400
     assert invalid_patch.json()["errors"][0]["detail"] == "Body id does not match path id"
+
+
+def test_fastapi_request_validation_error_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:
+    invalid_body = fastapi_client.post("/FastThings", json=["not-a-jsonapi-object"])
+    assert invalid_body.status_code == 422
+    assert JSONAPI_MEDIA_TYPE in invalid_body.headers.get("content-type", "")
+    payload = invalid_body.json()
+    assert "errors" in payload
+    assert "detail" not in payload
+    assert payload["errors"][0]["status"] == "422"
+
+
+def test_fastapi_validation_error_pointer_and_parameter_mapping() -> None:
+    class _Attrs(BaseModel):
+        name: int
+
+    class _Data(BaseModel):
+        attributes: _Attrs
+
+    class _Payload(BaseModel):
+        data: _Data
+
+    app = FastAPI()
+    install_jsonapi_exception_handlers(app)
+
+    @app.post("/typed")
+    def typed(payload: _Payload) -> dict[str, bool]:
+        return {"ok": bool(payload.data.attributes.name)}
+
+    @app.get("/typed-query")
+    def typed_query(limit: int) -> dict[str, bool]:
+        return {"ok": bool(limit)}
+
+    with TestClient(app) as client:
+        invalid_payload = client.post("/typed", json={"data": {"attributes": {"name": "x"}}})
+        assert invalid_payload.status_code == 422
+        payload_errors = invalid_payload.json()["errors"]
+        assert payload_errors[0]["source"]["pointer"] == "/data/attributes/name"
+
+        invalid_query = client.get("/typed-query?limit=nope")
+        assert invalid_query.status_code == 422
+        query_errors = invalid_query.json()["errors"]
+        assert query_errors[0]["source"]["parameter"] == "limit"
 
 
 def test_fastapi_patch_supports_sparse_fields_and_include(fastapi_client: TestClient) -> None:
