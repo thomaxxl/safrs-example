@@ -73,6 +73,14 @@ class FastLimitedThing(SAFRSBase, Base):
     name = Column(String)
 
 
+class FastLimitedThingCSV(SAFRSBase, Base):
+    __tablename__ = "FastLimitedThingsCSV"
+    http_methods = "GET,POST"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+
+
 def _request(query: str = "") -> Request:
     return Request(
         {
@@ -269,6 +277,47 @@ def test_fastapi_crud_route_registration_respects_model_http_methods() -> None:
             payload = patch_response.json()
             assert "errors" in payload
             assert payload["errors"][0]["status"] == "405"
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_crud_route_registration_respects_csv_model_http_methods() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        Session.add(FastLimitedThingCSV(name="limited-csv"))
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastLimitedThingCSV)
+
+        with TestClient(app) as client:
+            paths = client.get("/openapi.json").json()["paths"]
+            collection_path = "/FastLimitedThingsCSV"
+            instance_path = "/FastLimitedThingsCSV/{object_id}"
+
+            assert "get" in paths[collection_path]
+            assert "post" in paths[collection_path]
+            assert "get" in paths[instance_path]
+            assert "patch" not in paths[instance_path]
+            assert "delete" not in paths[instance_path]
+
+            patch_response = client.patch(
+                "/FastLimitedThingsCSV/1",
+                json={"data": {"id": "1", "type": "FastLimitedThingCSV", "attributes": {"name": "x"}}},
+            )
+            assert patch_response.status_code == 405
     finally:
         Session.remove()
         Base.metadata.drop_all(engine)
