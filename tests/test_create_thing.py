@@ -294,3 +294,17 @@ def test_create_review_with_empty_created_returns_bad_request(client):
 
     result = res.get_json()
     assert "Invalid value" in result["errors"][0]["detail"]
+
+
+def test_create_review_with_invalid_fk_returns_client_error_not_500(client):
+    payload = {
+        "data": {
+            "type": "Review",
+            "attributes": {"book_id": "0"},
+        }
+    }
+
+    res = client.post("/Reviews/", json=payload)
+    assert res.status_code in (400, 409)
+    result = res.get_json()
+    assert "errors" in result

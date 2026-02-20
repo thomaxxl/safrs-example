@@ -24,7 +24,23 @@ def test_invalid_json_api_rpc_1(client, mock_thing):
     invalid_rcp_args = {"foo": "bar"}
 
     res = client.get("/thing/get_by_name", json={"meta": {"args": invalid_rcp_args}})
-    assert res.status_code == 500
+    assert res.status_code == 400
+    assert "errors" in res.get_json()
+
+
+def test_invalid_json_api_rpc_meta_must_be_object(client):
+    res = client.post("/thing/startswith", json={"meta": 1})
+    assert res.status_code == 400
+    assert "errors" in res.get_json()
+
+
+def test_invalid_json_api_rpc_unexpected_args_return_bad_request(client, mock_thing):
+    res = client.post(
+        f"/thing/{mock_thing.id}/send_thing",
+        json={"meta": {"args": {"__junk__": "x"}}},
+    )
+    assert res.status_code == 400
+    assert "errors" in res.get_json()
 
 
 def test_invalid_json_api_rpc_2(client, mock_thing):
