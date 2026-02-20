@@ -28,6 +28,8 @@ def _person_rpc_api():
 def _rel_api_stub(direction, parse_args_fn, target=None):
     api = object.__new__(jsonapi.SAFRSRestRelationshipAPI)
     api.SAFRSObject = SimpleNamespace(relationship=SimpleNamespace(direction=direction))
+    api.relationship = api.SAFRSObject.relationship
+    api.source_class = SimpleNamespace(__name__="Parent")
     api.parse_args = parse_args_fn
     api.target = target or SimpleNamespace(_s_type="Target", get_instance=lambda _id: None)
     api.child_object_id = "ChildId"
