@@ -1,8 +1,9 @@
 import re
+from http import HTTPStatus
 from typing import Any
 
 import pytest
-from safrs.swagger_doc import schema_from_object, update_response_schema
+from safrs.swagger_doc import _ensure_not_found_response, _is_class_level_rpc_method, schema_from_object, update_response_schema
 
 
 def test_schema_from_object_types_dict_and_array(app):
@@ -41,6 +42,31 @@ def test_update_response_schema_error_document_uses_array_for_errors(app):
 
     error_schema = responses["404"]["schema"]
     assert error_schema.properties["errors"]["type"] == "array"
+
+
+def test_ensure_not_found_response_adds_default_once() -> None:
+    responses: dict[str, dict[str, str]] = {}
+    _ensure_not_found_response(responses)
+    _ensure_not_found_response(responses)
+    assert responses == {"404": {"description": HTTPStatus.NOT_FOUND.description}}
+
+
+def test_is_class_level_rpc_method_detection() -> None:
+    class Sample:
+        def instance_method(self) -> None:
+            return None
+
+        @classmethod
+        def class_method(cls) -> None:
+            return None
+
+        @staticmethod
+        def static_method() -> None:
+            return None
+
+    assert _is_class_level_rpc_method(Sample, "instance_method") is False
+    assert _is_class_level_rpc_method(Sample, "class_method") is True
+    assert _is_class_level_rpc_method(Sample, "static_method") is True
 
 
 def _canonical_path(path: str) -> str:
@@ -163,3 +189,18 @@ def test_swagger_paging_parameters_are_bounded(client):
     assert params["page[offset]"]["maximum"] == 100000
     assert params["page[limit]"]["minimum"] == 1
     assert params["page[limit]"]["maximum"] == 100
+
+
+def test_swagger_rpc_not_found_response_is_documented_for_instance_methods_only(client):
+    spec = client.get("/swagger.json").get_json()
+    if spec.get("swagger") != "2.0":
+        pytest.skip("Swagger 2.0 contract checks apply to Flask swagger output only")
+
+    paths = spec["paths"]
+    by_canonical = {_canonical_path(path): ops for path, ops in paths.items()}
+
+    send_mail_post = by_canonical["/People/{}/send_mail"]["post"]
+    my_rpc_post = by_canonical["/People/my_rpc"]["post"]
+
+    assert "404" in send_mail_post["responses"]
+    assert "404" not in my_rpc_post["responses"]

@@ -1,4 +1,5 @@
 import sys
+import json
 from pathlib import Path
 
 import pytest
@@ -126,3 +127,24 @@ def test_tmp_fastapi_seed_endpoint_returns_stable_ids(monkeypatch: pytest.Monkey
     assert payload["PersonId"]
     assert payload["PublisherId"]
     assert payload["ReviewId"]
+
+
+def test_tmp_flask_publishers_filter_returns_collection_document(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app = create_tmp_flask_app(db_name="tmp_flask_publishers_filter_contract_test.db")
+        with app.test_client() as client:
+            response = client.get(
+                "/api/Publishers/",
+                query_string={"filter": json.dumps([{"name": "name", "op": "ilike", "val": "publisher%"}])},
+            )
+    finally:
+        setattr(safrs, "DB", original_db)
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("data"), list)
