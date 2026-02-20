@@ -473,6 +473,24 @@ def test_tx_session_state_backend_tracks_writes_and_opt_out(monkeypatch):
     assert safrs.tx.in_request() is False
 
 
+def test_model_auto_commit_enabled_ignores_inherited_db_commit() -> None:
+    class BaseNoCommit:
+        db_commit = False
+
+    class ChildNoOverride(BaseNoCommit):
+        pass
+
+    class ChildOverrideFalse(BaseNoCommit):
+        db_commit = False
+
+    class ChildOverrideTrue(BaseNoCommit):
+        db_commit = True
+
+    assert safrs.tx.model_auto_commit_enabled(ChildNoOverride) is True
+    assert safrs.tx.model_auto_commit_enabled(ChildOverrideFalse) is False
+    assert safrs.tx.model_auto_commit_enabled(ChildOverrideTrue) is True
+
+
 def test_get_instance_by_id_and_s_query_error_paths(monkeypatch, db_session):
     """
     Covers:

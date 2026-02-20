@@ -647,6 +647,34 @@ def test_fastapi_uow_dependency_rolls_back_on_exception(monkeypatch: pytest.Monk
     assert calls["rollback"] == 1
 
 
+def test_fastapi_uow_dependency_rolls_back_when_commit_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self) -> None:
+            calls["commit"] += 1
+            raise RuntimeError("commit failed")
+
+        def rollback(self) -> None:
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(dep)
+    tx.note_write(CommitModel)
+    with pytest.raises(RuntimeError):
+        next(dep)
+
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+
+
 def test_tx_note_write_updates_fastapi_uow_state(monkeypatch: pytest.MonkeyPatch) -> None:
     app = FastAPI()
     api = SafrsFastAPI(app)
@@ -686,6 +714,28 @@ def test_tx_note_write_updates_fastapi_uow_state(monkeypatch: pytest.MonkeyPatch
     assert calls["commit"] == 1
     assert calls["rollback"] == 1
     assert tx.in_request() is False
+
+
+def test_fastapi_cleanup_session_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app, cleanup_session=False)
+    calls = {"remove": 0}
+
+    class Session:
+        info: dict[str, Any] = {}
+
+        def rollback(self) -> None:
+            return None
+
+        def remove(self) -> None:
+            calls["remove"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+    dep = api._safrs_uow_dependency(_request_with_method("GET"))
+    next(dep)
+    with pytest.raises(StopIteration):
+        next(dep)
+    assert calls["remove"] == 0
 
 
 def test_fastapi_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:

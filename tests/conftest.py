@@ -151,6 +151,7 @@ def db_session(connection,scope="session"):
         # Use a fixed scope key so request handling and test code share one session
         # and one nested transaction stack.
         session = scoped_session(session_factory, scopefunc=lambda: 1)
+        session.info["_safrs_skip_cleanup"] = True
     else:
         session = scoped_session(session_factory)
     db.session = session
@@ -158,6 +159,8 @@ def db_session(connection,scope="session"):
     try:
         yield session
     finally:
+        if backend == "fastapi":
+            session.info.pop("_safrs_skip_cleanup", None)
         session.remove()
         db.session = original_session
         transaction.rollback()
