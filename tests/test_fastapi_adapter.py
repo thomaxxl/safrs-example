@@ -609,6 +609,14 @@ def test_fastapi_uow_dependency_commit_and_rollback(monkeypatch: pytest.MonkeyPa
     assert calls["commit"] == 1
     assert calls["rollback"] == 2
 
+    error_dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(error_dep)
+    api._note_write(CommitModel)
+    with pytest.raises(RuntimeError):
+        error_dep.throw(RuntimeError("boom"))
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 3
+
 
 def test_fastapi_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:
     response = fastapi_client.get("/FastBooks?include=invalid_rel")
