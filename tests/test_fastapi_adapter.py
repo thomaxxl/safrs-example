@@ -7,6 +7,7 @@ import pytest
 import safrs
 from safrs.api_methods import duplicate
 from safrs import SAFRSBase
+from safrs import tx
 from safrs.errors import JsonapiError, SystemValidationError, ValidationError
 from safrs.swagger_doc import jsonapi_rpc
 from sqlalchemy import Column, ForeignKey, Integer, String, create_engine
@@ -616,6 +617,75 @@ def test_fastapi_uow_dependency_commit_and_rollback(monkeypatch: pytest.MonkeyPa
         error_dep.throw(RuntimeError("boom"))
     assert calls["commit"] == 1
     assert calls["rollback"] == 3
+
+
+def test_fastapi_uow_dependency_rolls_back_on_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self) -> None:
+            calls["commit"] += 1
+
+        def rollback(self) -> None:
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(dep)
+    api._note_write(CommitModel)
+
+    with pytest.raises(RuntimeError):
+        dep.throw(RuntimeError("boom"))
+
+    assert calls["commit"] == 0
+    assert calls["rollback"] == 1
+
+
+def test_tx_note_write_updates_fastapi_uow_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self) -> None:
+            calls["commit"] += 1
+
+        def rollback(self) -> None:
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    class NoCommitModel:
+        db_commit = False
+
+    dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(dep)
+    assert tx.in_request() is True
+    tx.note_write(CommitModel)
+    with pytest.raises(StopIteration):
+        next(dep)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 0
+    assert tx.in_request() is False
+
+    dep_no_commit = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(dep_no_commit)
+    assert tx.in_request() is True
+    tx.note_write(NoCommitModel)
+    with pytest.raises(StopIteration):
+        next(dep_no_commit)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+    assert tx.in_request() is False
 
 
 def test_fastapi_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:

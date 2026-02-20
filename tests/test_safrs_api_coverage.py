@@ -279,3 +279,48 @@ def test_http_method_decorator_request_uow_commit_and_opt_out(app, monkeypatch):
         assert wrapped_read() == {"ok": True}
     assert calls["commit"] == 1
     assert calls["rollback"] == 2
+
+
+def test_http_method_decorator_relationship_notes_parent_and_target(app, monkeypatch):
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self):
+            calls["commit"] += 1
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class ParentCommit:
+        db_commit = True
+
+    class TargetCommit:
+        db_commit = True
+
+    class ParentNoCommit:
+        db_commit = False
+
+    class RelWrapperCommit:
+        parent = ParentCommit
+        _target = TargetCommit
+
+    class RelWrapperNoCommit:
+        parent = ParentNoCommit
+        _target = TargetCommit
+
+    def handler(*_a, **_k):
+        return {"ok": True}
+
+    wrapped = safrs_api.http_method_decorator(handler)
+
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        assert wrapped(SimpleNamespace(SAFRSObject=RelWrapperCommit)) == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 0
+
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        assert wrapped(SimpleNamespace(SAFRSObject=RelWrapperNoCommit)) == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1

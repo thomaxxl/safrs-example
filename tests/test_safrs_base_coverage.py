@@ -435,6 +435,44 @@ def test_s_post_marks_write_and_honors_db_commit_flag(db_session):
         models.Thing.db_commit = orig
 
 
+def test_tx_session_state_backend_tracks_writes_and_opt_out(monkeypatch):
+    class Session:
+        def __init__(self):
+            self.info = {}
+
+    session = Session()
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=session))
+
+    session.info["_safrs_uow_active"] = True
+    session.info["_safrs_writes_seen"] = False
+    session.info["_safrs_auto_commit_enabled"] = True
+
+    class CommitModel:
+        db_commit = True
+
+    class NoCommitModel:
+        db_commit = False
+
+    safrs.tx.note_write(CommitModel)
+    assert safrs.tx.in_request() is True
+    assert safrs.tx.has_writes() is True
+    assert safrs.tx.should_autocommit() is True
+
+    session.info["_safrs_writes_seen"] = False
+    session.info["_safrs_auto_commit_enabled"] = True
+    safrs.tx.note_write(NoCommitModel)
+    assert safrs.tx.has_writes() is True
+    assert safrs.tx.should_autocommit() is False
+
+    session.info["_safrs_writes_seen"] = True
+    session.info["_safrs_auto_commit_enabled"] = True
+    safrs.tx.disable_autocommit()
+    assert safrs.tx.should_autocommit() is False
+
+    session.info["_safrs_uow_active"] = False
+    assert safrs.tx.in_request() is False
+
+
 def test_get_instance_by_id_and_s_query_error_paths(monkeypatch, db_session):
     """
     Covers:
