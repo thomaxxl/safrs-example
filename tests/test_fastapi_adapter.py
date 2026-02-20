@@ -71,6 +71,14 @@ class FastThing(SAFRSBase, Base):
         return {"meta": {"value": f"{prefix}{self.name}"}}
 
 
+class FastClientIdThing(SAFRSBase, Base):
+    __tablename__ = "FastClientIdThings"
+    allow_client_generated_ids = True
+
+    id = Column(String, primary_key=True)
+    name = Column(String)
+
+
 class FastLimitedThing(SAFRSBase, Base):
     __tablename__ = "FastLimitedThings"
     http_methods = {"GET", "POST"}
@@ -92,6 +100,18 @@ def _request(query: str = "") -> Request:
         {
             "type": "http",
             "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": query.encode(),
+        }
+    )
+
+
+def _request_with_method(method: str, query: str = "") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": method.upper(),
             "path": "/",
             "headers": [],
             "query_string": query.encode(),
@@ -254,6 +274,36 @@ def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) 
     assert things_post["responses"]["422"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"].endswith("/JsonApiErrorDocument")
 
 
+def test_fastapi_create_example_includes_id_for_client_generated_ids() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        Session.add(FastClientIdThing(id="cid-1", name="client"))
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastClientIdThing)
+
+        with TestClient(app) as client:
+            paths = client.get("/openapi.json").json()["paths"]
+            create_example = paths["/FastClientIdThings"]["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["example"]
+            assert create_example["data"]["type"] == "FastClientIdThing"
+            assert "id" in create_example["data"]
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
 def test_fastapi_crud_route_registration_respects_model_http_methods() -> None:
     original_db = safrs.DB
     engine = create_engine(
@@ -370,6 +420,8 @@ def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage
     books_delete_ref = books_rel["delete"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     author_patch_example = author_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
     books_patch_example = books_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    books_post_example = books_rel["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    books_delete_example = books_rel["delete"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
     assert author_patch_ref.endswith("/FastAuthorRelationshipDocumentToOne")
     assert books_patch_ref.endswith("/FastBookRelationshipDocumentToMany")
     assert books_post_ref.endswith("/FastBookRelationshipDocumentToMany")
@@ -381,6 +433,14 @@ def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage
     assert isinstance(books_patch_example["data"], list)
     assert books_patch_example["data"][0]["type"] == "FastBook"
     assert "id" in books_patch_example["data"][0]
+    assert isinstance(books_post_example, dict)
+    assert isinstance(books_post_example["data"], list)
+    assert books_post_example["data"][0]["type"] == "FastBook"
+    assert "id" in books_post_example["data"][0]
+    assert isinstance(books_delete_example, dict)
+    assert isinstance(books_delete_example["data"], list)
+    assert books_delete_example["data"][0]["type"] == "FastBook"
+    assert "id" in books_delete_example["data"][0]
 
 
 def test_fastapi_openapi_examples_can_be_disabled() -> None:
@@ -504,6 +564,50 @@ def test_fastapi_openapi_rpc_query_params_and_tags_documented(fastapi_client: Te
     tags = {str(tag.get("name")): str(tag.get("description", "")) for tag in spec.get("tags", [])}
     assert "FastAuthors" in tags
     assert tags["FastAuthors"]
+
+
+def test_fastapi_uow_dependency_commit_and_rollback(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self) -> None:
+            calls["commit"] += 1
+
+        def rollback(self) -> None:
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    class NoCommitModel:
+        db_commit = False
+
+    post_dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(post_dep)
+    api._note_write(CommitModel)
+    with pytest.raises(StopIteration):
+        next(post_dep)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 0
+
+    post_no_commit_dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(post_no_commit_dep)
+    api._note_write(NoCommitModel)
+    with pytest.raises(StopIteration):
+        next(post_no_commit_dep)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+
+    get_dep = api._safrs_uow_dependency(_request_with_method("GET"))
+    next(get_dep)
+    with pytest.raises(StopIteration):
+        next(get_dep)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 2
 
 
 def test_fastapi_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:

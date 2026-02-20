@@ -267,6 +267,22 @@ def test_init_with_Type_kwarg_sets_type_column(monkeypatch):
     assert twt.type == "MyType"
 
 
+def test_init_does_not_add_or_commit_implicitly(monkeypatch):
+    calls = {"add": 0, "commit": 0}
+
+    def fake_add(_obj):
+        calls["add"] += 1
+
+    def fake_commit():
+        calls["commit"] += 1
+
+    monkeypatch.setattr(safrs.DB.session, "add", fake_add)
+    monkeypatch.setattr(safrs.DB.session, "commit", fake_commit)
+    models.Thing(name="constructor-only", description="x")
+    assert calls["add"] == 0
+    assert calls["commit"] == 0
+
+
 def test_init_with_jsonapi_attr_kwarg_calls_setter():
     """
     Covers SAFRSBase.__init__ jsonapi_attr kwarg handling (also around ~352).
@@ -393,6 +409,32 @@ def test_auto_commit_setter_sets_db_commit_flag():
         assert models.Thing.db_commit is orig
 
 
+def test_s_post_marks_write_and_honors_db_commit_flag(db_session):
+    orig = models.Thing.db_commit
+    try:
+        models.Thing.db_commit = True
+        token = safrs.tx.begin_request()
+        try:
+            models.Thing._s_post(None, name="uow-default", description="d")
+            assert safrs.tx.has_writes() is True
+            assert safrs.tx.should_autocommit() is True
+        finally:
+            safrs.tx.end_request(token)
+            db_session.rollback()
+
+        models.Thing.db_commit = False
+        token = safrs.tx.begin_request()
+        try:
+            models.Thing._s_post(None, name="uow-optout", description="d")
+            assert safrs.tx.has_writes() is True
+            assert safrs.tx.should_autocommit() is False
+        finally:
+            safrs.tx.end_request(token)
+            db_session.rollback()
+    finally:
+        models.Thing.db_commit = orig
+
+
 def test_get_instance_by_id_and_s_query_error_paths(monkeypatch, db_session):
     """
     Covers:
@@ -480,4 +522,3 @@ def test_unicode_and_http_methods_cover_remaining_lines(monkeypatch):
 
     assert t.__unicode__() == "n"      # covers 1087-1088
     assert "GET" in t.http_methods     # covers 554
-

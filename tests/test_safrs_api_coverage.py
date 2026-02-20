@@ -8,6 +8,7 @@ from flask_restful import Resource
 
 import safrs
 import safrs.safrs_api as safrs_api
+from safrs import tx as safrs_tx
 from safrs.errors import SystemValidationError
 
 
@@ -230,3 +231,51 @@ def test_api_decorator_and_http_method_decorator_branches(app, monkeypatch):
             wrapped_generic()
     assert abort_calls[-1][1][0]["title"] == "Logging Disabled"
     safrs.log.setLevel(old_level)
+
+
+def test_http_method_decorator_request_uow_commit_and_opt_out(app, monkeypatch):
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self):
+            calls["commit"] += 1
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    class NoCommitModel:
+        db_commit = False
+
+    def get(*_a, **_k):
+        safrs_tx.note_write(CommitModel)
+        return {"ok": True}
+
+    wrapped_commit = safrs_api.http_method_decorator(get)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        assert wrapped_commit() == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 0
+
+    def get_no_commit(*_a, **_k):
+        safrs_tx.note_write(NoCommitModel)
+        return {"ok": True}
+
+    wrapped_no_commit = safrs_api.http_method_decorator(get_no_commit)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        assert wrapped_no_commit() == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+
+    def get(*_a, **_k):
+        return {"ok": True}
+
+    wrapped_read = safrs_api.http_method_decorator(get)
+    with app.test_request_context("/", method="GET"):
+        assert wrapped_read() == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 2
