@@ -2,6 +2,7 @@ import builtins
 from types import SimpleNamespace
 
 import pytest
+import sqlalchemy
 import werkzeug
 from flask import Response
 from flask_restful import Resource
@@ -324,3 +325,45 @@ def test_http_method_decorator_relationship_notes_parent_and_target(app, monkeyp
         assert wrapped(SimpleNamespace(SAFRSObject=RelWrapperNoCommit)) == {"ok": True}
     assert calls["commit"] == 1
     assert calls["rollback"] == 1
+
+
+def test_http_method_decorator_maps_db_input_errors_to_client_errors(app, monkeypatch):
+    abort_calls = []
+    calls = {"rollback": 0}
+
+    def fake_abort(status_code, errors=None):
+        abort_calls.append((status_code, errors))
+        raise RuntimeError("aborted")
+
+    class Session:
+        def commit(self):
+            return None
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs_api, "abort", fake_abort)
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    def overflowing_write(*_a, **_k):
+        raise OverflowError("too large")
+
+    wrapped_overflow = safrs_api.http_method_decorator(overflowing_write)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        with pytest.raises(RuntimeError):
+            wrapped_overflow()
+
+    assert abort_calls[-1][0] == 400
+    assert abort_calls[-1][1][0]["detail"] == "Invalid attribute value"
+    assert calls["rollback"] >= 1
+
+    def conflicting_write(*_a, **_k):
+        raise sqlalchemy.exc.IntegrityError("stmt", {}, Exception("constraint"))
+
+    wrapped_integrity = safrs_api.http_method_decorator(conflicting_write)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        with pytest.raises(RuntimeError):
+            wrapped_integrity()
+
+    assert abort_calls[-1][0] == 409
+    assert abort_calls[-1][1][0]["detail"] == "Database constraint violation"

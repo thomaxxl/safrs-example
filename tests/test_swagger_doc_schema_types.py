@@ -3,7 +3,9 @@ from http import HTTPStatus
 from typing import Any
 
 import pytest
-from safrs.swagger_doc import _ensure_not_found_response, _is_class_level_rpc_method, schema_from_object, update_response_schema
+from sqlalchemy import BigInteger, Column, Integer
+
+from safrs.swagger_doc import _column_schema, _ensure_not_found_response, _is_class_level_rpc_method, schema_from_object, update_response_schema
 
 
 def test_schema_from_object_types_dict_and_array(app):
@@ -32,6 +34,20 @@ def test_schema_from_object_type_boolean(app):
 
     assert schema.properties["active"]["type"] == "boolean"
     assert schema.properties["active"]["example"] is True
+
+
+def test_column_schema_integer_bounds_for_sqlite_safety() -> None:
+    int_id_schema = _column_schema(Column("reader_id", Integer))
+    big_int_schema = _column_schema(Column("counter", BigInteger))
+
+    assert int_id_schema["type"] == "integer"
+    assert int_id_schema["format"] == "int32"
+    assert int_id_schema["maximum"] == 2147483647
+    assert int_id_schema["minimum"] == 1
+
+    assert big_int_schema["type"] == "integer"
+    assert big_int_schema["format"] == "int64"
+    assert big_int_schema["maximum"] == 9223372036854775807
 
 
 def test_update_response_schema_error_document_uses_array_for_errors(app):
