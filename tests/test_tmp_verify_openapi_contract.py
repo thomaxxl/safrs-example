@@ -394,6 +394,56 @@ def test_patch_spec_with_seed_translates_object_id_for_instance_path() -> None:
     assert obj_param["default"] == "book-1"
 
 
+def test_patch_spec_with_seed_reports_unknown_object_id_collections_once() -> None:
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/api/Category/{object_id}": {
+                "get": {
+                    "parameters": [
+                        {"name": "object_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            },
+            "/api/Customer/{object_id}": {
+                "patch": {
+                    "parameters": [
+                        {"name": "object_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            },
+        },
+    }
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _patch_spec_with_seed(spec, {"BookId": "book-1"})
+    message = str(exc_info.value)
+    assert "Category, Customer" in message
+    assert "wrong spec" in message
+    assert "fastapi.openapi.json" in message
+
+
+def test_patch_spec_with_seed_reports_missing_seed_ids_for_known_collection() -> None:
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/api/Books/{object_id}": {
+                "get": {
+                    "parameters": [
+                        {"name": "object_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(RuntimeError, match=r"Seed payload missing ids required for object_id patching: Books->BookId"):
+        _patch_spec_with_seed(spec, {})
+
+
 def test_patch_spec_with_seed_resolves_ref_relationship_schema() -> None:
     spec = {
         "openapi": "3.1.0",
