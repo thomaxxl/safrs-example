@@ -453,6 +453,72 @@ def test_patch_spec_with_seed_resolves_ref_relationship_schema() -> None:
     assert obj_param["enum"] == ["2"]
 
 
+def test_patch_spec_with_seed_handles_anyof_nullable_relationship_to_one() -> None:
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/api/Books/{object_id}/publisher": {
+                "patch": {
+                    "summary": "Patch relationship Books.publisher",
+                    "parameters": [
+                        {"name": "object_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "requestBody": {
+                        "content": {
+                            "application/vnd.api+json": {
+                                "schema": {"$ref": "#/components/schemas/PublisherRelationshipDocumentToOne"}
+                            }
+                        }
+                    },
+                    "responses": {"204": {"description": "No Content"}},
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "PublisherResourceIdentifier": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "const": "Publisher"},
+                        "id": {"type": "string"},
+                    },
+                    "required": ["id"],
+                },
+                "PublisherRelationshipDocumentToOne": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "anyOf": [
+                                {"$ref": "#/components/schemas/PublisherResourceIdentifier"},
+                                {"type": "null"},
+                            ],
+                            "default": None,
+                        }
+                    },
+                },
+            }
+        },
+    }
+    seed = {
+        "BookId": "book-fallback",
+        "relationship_path_params": {"Books.publisher": {"BookId": "book-1"}},
+        "relationships": {"Books.publisher": {"data": {"type": "Publisher", "id": "pub-2"}}},
+    }
+
+    patched = _patch_spec_with_seed(spec, seed)
+
+    params = patched["paths"]["/api/Books/{object_id}/publisher"]["patch"]["parameters"]
+    obj_param = next(param for param in params if param.get("name") == "object_id")
+    assert obj_param["enum"] == ["book-1"]
+
+    anyof0 = patched["components"]["schemas"]["PublisherRelationshipDocumentToOne"]["properties"]["data"]["anyOf"][0]
+    assert anyof0["properties"]["id"]["enum"] == ["pub-2"]
+    assert anyof0["properties"]["type"]["enum"] == ["Publisher"]
+
+    global_id = patched["components"]["schemas"]["PublisherResourceIdentifier"]["properties"]["id"]
+    assert "enum" not in global_id
+
+
 def test_patch_spec_with_seed_relationship_path_params_missing_raises() -> None:
     spec = {
         "swagger": "2.0",
