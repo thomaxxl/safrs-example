@@ -1,7 +1,7 @@
-# FastAPI + SAFRS App (External Models)
+# FastAPI + SAFRS App (Local Models)
 
 This directory contains a FastAPI SAFRS app similar to `safrs/tmp/fastapi_app.py`,
-but it loads SQLAlchemy/SAFRS models from `/tmp/models.py`.
+with a cleaned `models.py` placed in this same directory.
 
 ## Run
 
@@ -17,16 +17,12 @@ Then open:
 
 ## Environment Variables
 
-- `SAFRS_MODELS_FILE` (default: `/tmp/models.py`)
-- `SAFRS_MODELS_PROJECT_ROOT` (default: `/home/t/lab/ALS/ApiLogicProject`)
-- `SAFRS_SQLITE_PATH` (default: `database/db.sqlite` relative to project root)
-- `SAFRS_API_PREFIX` (default: `/api`)
-- `HOST` (default: `127.0.0.1`)
-- `PORT` (default: `8000`)
+- `SAFRS_SQLITE_PATH` (default: `/home/t/lab/ALS/ApiLogicProject/database/db.sqlite`)
+- `SAFRS_RESET_DB` (set to `1`/`true`/`yes` to delete the DB file before startup)
 
 ## Notes
 
 - The app adds `safrs/` in this workspace to `sys.path` so `import safrs` resolves
   to the package in the nested repository.
-- Minimal compatibility shims are provided for `flask_login` and `flask_sqlalchemy`
-  if they are not installed, because `/tmp/models.py` imports them.
+- The local `models.py` was cleaned from `/tmp/models.py` as a reference, with
+  external Flask-specific base dependencies removed.
