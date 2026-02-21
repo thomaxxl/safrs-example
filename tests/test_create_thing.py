@@ -6,6 +6,13 @@ from pprint import pprint
 from tests.factories import ThingFactory
 
 
+def _normalize_datetime_string(value: str) -> datetime.datetime:
+    parsed = datetime.datetime.fromisoformat(str(value))
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 def test_create_thing(client, mock_thing, db_session):
     name = "created_name"
     desc = "created_description"
@@ -19,7 +26,7 @@ def test_create_thing(client, mock_thing, db_session):
     result = res.get_json()
     assert result["data"]["attributes"]["name"] == name
     assert result["data"]["attributes"]["description"] == desc
-    assert result["data"]["attributes"]["created"] == created
+    assert _normalize_datetime_string(result["data"]["attributes"]["created"]) == _normalize_datetime_string(created)
 
     # Check thing was created and saved.
     thing = db_session.query(models.Thing).filter(models.Thing.name == name).one_or_none()
@@ -34,7 +41,7 @@ def test_create_thing(client, mock_thing, db_session):
     pprint(result)
     assert result["data"]["attributes"]["name"] == name
     assert result["data"]["attributes"]["description"] == desc
-    assert result["data"]["attributes"]["created"] == created
+    assert _normalize_datetime_string(result["data"]["attributes"]["created"]) == _normalize_datetime_string(created)
 
     res = client.post(f"/thing/{thing.id}", json={"data": data})
     assert res.status_code == 405
@@ -81,7 +88,9 @@ def test_get_thing(client, mock_thing, db_session):
     assert result["data"]["id"] == mock_thing.id
     assert result["data"]["attributes"]["name"] == mock_thing.name
     assert result["data"]["attributes"]["description"] == mock_thing.description
-    assert result["data"]["attributes"]["created"] == str(mock_thing.created)
+    assert _normalize_datetime_string(result["data"]["attributes"]["created"]) == _normalize_datetime_string(
+        str(mock_thing.created)
+    )
 
 
 def test_get_inexistent_thing(client, mock_thing, db_session):
@@ -111,7 +120,9 @@ def test_patch_thing(client, mock_thing, db_session):
     assert result["data"]["id"] == mock_thing.id
     assert result["data"]["attributes"]["name"] == new_name
     assert result["data"]["attributes"]["description"] is None
-    assert result["data"]["attributes"]["created"] == str(mock_thing.created)
+    assert _normalize_datetime_string(result["data"]["attributes"]["created"]) == _normalize_datetime_string(
+        str(mock_thing.created)
+    )
 
     # Check patched thing was successfully saved in the db.
     thing = db_session.query(models.Thing).filter(models.Thing.name == mock_thing.name).one_or_none()

@@ -1,4 +1,5 @@
 import json
+import datetime as dt
 from types import SimpleNamespace
 from typing import Any, Generator
 
@@ -271,6 +272,8 @@ def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) 
     assert "id" in patch_example["data"]
     assert "attributes" in patch_example["data"]
     assert "204" in paths["/FastThings/{object_id}"]["delete"]["responses"]
+    assert "content" not in paths["/FastThings/{object_id}"]["delete"]["responses"]["204"]
+    assert "content" not in paths["/FastAuthors/{object_id}/books"]["delete"]["responses"]["204"]
     assert JSONAPI_MEDIA_TYPE in things_post["responses"]["422"]["content"]
     assert things_post["responses"]["422"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"].endswith("/JsonApiErrorDocument")
 
@@ -1169,6 +1172,51 @@ def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> 
 
     encoded = api._encode_resource(FastThing, EncObj())
     assert encoded["attributes"]["name"] is None
+
+
+def test_fastapi_rpc_request_context_parses_query_string() -> None:
+    request = _request("fields[FastBook]=&page[offset]=1")
+    with SafrsFastAPI._rpc_request_context(request):
+        from flask import request as flask_request
+
+        assert flask_request.args.get("fields[FastBook]") == ""
+        assert flask_request.args.get("page[offset]") == "1"
+
+
+def test_fastapi_remove_relationship_item_missing_member_is_noop(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+    rel_value = [1]
+
+    api._remove_relationship_item(rel_value, 2)
+    assert rel_value == [1]
+
+    api._remove_relationship_item(rel_value, 1)
+    assert rel_value == []
+
+
+def test_fastapi_encode_resource_temporal_values_use_rfc3339(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+
+    class TemporalModel:
+        _s_type = "TemporalModel"
+        _s_jsonapi_attrs = {
+            "created": object(),
+            "published_on": object(),
+            "published_at": object(),
+        }
+
+    class TemporalObj:
+        jsonapi_id = 1
+        created = dt.datetime(2026, 2, 21, 14, 3, 16, 394973)
+        published_on = dt.date(2026, 2, 21)
+        published_at = dt.time(0, 0, 0)
+
+    encoded = api._encode_resource(TemporalModel, TemporalObj())
+    attrs = encoded["attributes"]
+
+    assert attrs["created"] == "2026-02-21T14:03:16.394973+00:00"
+    assert attrs["published_on"] == "2026-02-21"
+    assert attrs["published_at"] == "00:00:00+00:00"
 
 
 def test_fastapi_relationship_handler_branch_errors(fastapi_client: TestClient) -> None:
