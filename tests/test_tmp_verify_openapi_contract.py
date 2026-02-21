@@ -98,6 +98,7 @@ def test_patch_spec_with_seed_sets_path_and_body_enums() -> None:
         "BookId": "book-uuid-1",
         "PersonId": "1",
         "FriendId": "2",
+        "relationship_path_params": {"Books.author": {"BookId": "book-uuid-1"}},
         "relationships": {"Books.author": {"data": {"type": "Person", "id": "1"}}},
     }
     patched = _patch_spec_with_seed(spec, seed)
@@ -153,6 +154,7 @@ def test_patch_spec_with_seed_relationship_to_many_uses_seed_linkage() -> None:
     }
     seed = {
         "BookId": "book-1",
+        "relationship_path_params": {"Books.reviews": {"BookId": "book-1"}},
         "relationships": {
             "Books.reviews": {
                 "data": [
@@ -183,6 +185,7 @@ def test_patch_spec_with_seed_relationship_missing_seed_entry_raises() -> None:
                 "patch": {
                     "description": "Update the Book reviews relationship",
                     "parameters": [
+                        {"name": "BookId", "in": "path", "type": "string"},
                         {
                             "name": "body",
                             "in": "body",
@@ -196,7 +199,7 @@ def test_patch_spec_with_seed_relationship_missing_seed_entry_raises() -> None:
             }
         },
     }
-    seed = {"BookId": "book-1", "relationships": {}}
+    seed = {"BookId": "book-1", "relationship_path_params": {"Books.reviews": {"BookId": "book-1"}}, "relationships": {}}
 
     with pytest.raises(RuntimeError, match="Missing seed relationship payload for Books.reviews"):
         _patch_spec_with_seed(spec, seed)
@@ -210,6 +213,7 @@ def test_patch_spec_with_seed_relationship_cardinality_mismatch_raises() -> None
                 "patch": {
                     "description": "Update the Book reviews relationship",
                     "parameters": [
+                        {"name": "BookId", "in": "path", "type": "string"},
                         {
                             "name": "body",
                             "in": "body",
@@ -223,7 +227,10 @@ def test_patch_spec_with_seed_relationship_cardinality_mismatch_raises() -> None
             }
         },
     }
-    seed = {"relationships": {"Books.reviews": {"data": {"type": "Review", "id": "book-1_1"}}}}
+    seed = {
+        "relationship_path_params": {"Books.reviews": {"BookId": "book-1"}},
+        "relationships": {"Books.reviews": {"data": {"type": "Review", "id": "book-1_1"}}},
+    }
 
     with pytest.raises(RuntimeError, match="must use array data"):
         _patch_spec_with_seed(spec, seed)
@@ -237,6 +244,7 @@ def test_patch_spec_with_seed_relationship_type_mismatch_raises() -> None:
                 "patch": {
                     "description": "Update the Book reviews relationship",
                     "parameters": [
+                        {"name": "BookId", "in": "path", "type": "string"},
                         {
                             "name": "body",
                             "in": "body",
@@ -258,9 +266,86 @@ def test_patch_spec_with_seed_relationship_type_mismatch_raises() -> None:
             }
         },
     }
-    seed = {"relationships": {"Books.reviews": {"data": [{"type": "Person", "id": "1"}]}}}
+    seed = {
+        "relationship_path_params": {"Books.reviews": {"BookId": "book-1"}},
+        "relationships": {"Books.reviews": {"data": [{"type": "Person", "id": "1"}]}},
+    }
 
     with pytest.raises(RuntimeError, match="incompatible types"):
+        _patch_spec_with_seed(spec, seed)
+
+
+def test_patch_spec_with_seed_relationship_path_params_override_global_id() -> None:
+    spec = {
+        "swagger": "2.0",
+        "paths": {
+            "/api/People/{PersonId}/books_written": {
+                "patch": {
+                    "description": "Update the Person books_written relationship",
+                    "parameters": [
+                        {"name": "PersonId", "in": "path", "type": "string"},
+                        {
+                            "name": "body",
+                            "in": "body",
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "data": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "type": {"type": "string", "enum": ["Book"]},
+                                                "id": {"type": "string"},
+                                            },
+                                        },
+                                    }
+                                },
+                            },
+                        },
+                    ],
+                }
+            }
+        },
+    }
+    seed = {
+        "PersonId": "1",
+        "relationship_path_params": {"People.books_written": {"PersonId": "2"}},
+        "relationships": {"People.books_written": {"data": [{"type": "Book", "id": "book-2"}]}},
+    }
+
+    patched = _patch_spec_with_seed(spec, seed)
+    params = patched["paths"]["/api/People/{PersonId}/books_written"]["patch"]["parameters"]
+    person_param = next(param for param in params if param.get("name") == "PersonId")
+    assert person_param["enum"] == ["2"]
+    assert person_param["default"] == "2"
+
+
+def test_patch_spec_with_seed_relationship_path_params_missing_raises() -> None:
+    spec = {
+        "swagger": "2.0",
+        "paths": {
+            "/api/Books/{BookId}/reviews": {
+                "patch": {
+                    "description": "Update the Book reviews relationship",
+                    "parameters": [
+                        {"name": "BookId", "in": "path", "type": "string"},
+                        {
+                            "name": "body",
+                            "in": "body",
+                            "schema": {
+                                "type": "object",
+                                "properties": {"data": {"type": "array", "items": {"type": "object"}}},
+                            },
+                        },
+                    ],
+                }
+            }
+        },
+    }
+    seed = {"relationships": {"Books.reviews": {"data": [{"type": "Review", "id": "book-1_1"}]}}}
+
+    with pytest.raises(RuntimeError, match="relationship_path_params"):
         _patch_spec_with_seed(spec, seed)
 
 
@@ -321,6 +406,9 @@ def test_tmp_flask_seed_endpoint_returns_stable_ids(monkeypatch: pytest.MonkeyPa
     assert "Books.publisher" in payload["relationships"]
     assert "Books.reviews" in payload["relationships"]
     assert "Publishers.books" in payload["relationships"]
+    assert "relationship_path_params" in payload
+    assert "People.friends" in payload["relationship_path_params"]
+    assert "Books.reviews" in payload["relationship_path_params"]
 
 
 def test_tmp_fastapi_seed_endpoint_returns_stable_ids(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -351,6 +439,9 @@ def test_tmp_fastapi_seed_endpoint_returns_stable_ids(monkeypatch: pytest.Monkey
     assert payload["relationships"]["Books.publisher"]["data"]["id"]
     assert payload["relationships"]["Books.reviews"]["data"]
     assert payload["relationships"]["Publishers.books"]["data"]
+    assert payload["relationship_path_params"]["People.books_read"]["PersonId"]
+    assert payload["relationship_path_params"]["Books.publisher"]["BookId"]
+    assert payload["relationship_path_params"]["Publishers.books"]["PublisherId"]
 
 
 def test_tmp_flask_seed_endpoint_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -386,7 +477,7 @@ def test_tmp_seed_relationship_payloads_use_jsonapi_resource_identifiers(monkeyp
 
 def test_tmp_seed_relationship_payloads_reference_real_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     from flask_app import create_app as create_tmp_flask_app
-    from models import Book, Person, Publisher, Review
+    from models import Book, Person, Publisher, Review, _validate_seed_payload
 
     monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
     original_db = getattr(safrs, "DB", None)
@@ -412,6 +503,7 @@ def test_tmp_seed_relationship_payloads_reference_real_rows(monkeypatch: pytest.
         for identifier in _iter_seed_identifiers(payload):
             model_cls = type_map[identifier["type"]]
             assert model_cls.get_instance(identifier["id"]) is not None
+        _validate_seed_payload(payload)
     finally:
         setattr(safrs, "DB", original_db)
 
@@ -425,12 +517,14 @@ def test_tmp_flask_seed_relationship_mutations_are_not_server_errors(monkeypatch
         app = create_tmp_flask_app(db_name="tmp_flask_seed_relationship_mutation_test.db")
         with app.test_client() as client:
             seed = client.get("/seed").get_json()
+            book_id = seed["relationship_path_params"]["Books.author"]["BookId"]
+            person_id = seed["relationship_path_params"]["People.friends"]["PersonId"]
             to_one_response = client.patch(
-                f"/api/Books/{seed['BookId']}/author",
+                f"/api/Books/{book_id}/author",
                 json=seed["relationships"]["Books.author"],
             )
             to_many_response = client.post(
-                f"/api/People/{seed['PersonId']}/friends",
+                f"/api/People/{person_id}/friends",
                 json=seed["relationships"]["People.friends"],
             )
     finally:
@@ -576,17 +670,36 @@ def test_tmp_flask_relationship_clear_returns_controlled_client_error(monkeypatc
         app = create_tmp_flask_app(db_name="tmp_flask_relationship_clear_guard.db")
         with app.test_client() as client:
             seed = client.get("/seed").get_json()
-            book_response = client.patch(f"/api/Books/{seed['BookId']}/reviews", json={"data": []})
-            person_response = client.patch(f"/api/People/{seed['PersonId']}/reviews", json={"data": []})
+            book_id = seed["relationship_path_params"]["Books.reviews"]["BookId"]
+            person_id = seed["relationship_path_params"]["People.reviews"]["PersonId"]
+            book_response = client.patch(f"/api/Books/{book_id}/reviews", json={"data": []})
+            person_response = client.patch(f"/api/People/{person_id}/reviews", json={"data": []})
     finally:
         setattr(safrs, "DB", original_db)
 
     for response in (book_response, person_response):
-        assert response.status_code in {HTTPStatus.FORBIDDEN, HTTPStatus.CONFLICT}
+        assert response.status_code == HTTPStatus.CONFLICT
         payload = response.get_json()
         assert isinstance(payload, dict)
         assert "errors" in payload
         assert response.status_code != HTTPStatus.INTERNAL_SERVER_ERROR
+
+
+def test_tmp_flask_safe_many_to_many_disassociation_allows_patch_clear(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app = create_tmp_flask_app(db_name="tmp_flask_relationship_clear_m2m_safe.db")
+        with app.test_client() as client:
+            seed = client.get("/seed").get_json()
+            person_id = seed["relationship_path_params"]["People.friends"]["PersonId"]
+            response = client.patch(f"/api/People/{person_id}/friends", json={"data": []})
+    finally:
+        setattr(safrs, "DB", original_db)
+
+    assert response.status_code in {HTTPStatus.OK, HTTPStatus.NO_CONTENT}
 
 
 def test_tmp_flask_publishers_filter_returns_collection_document(monkeypatch: pytest.MonkeyPatch) -> None:

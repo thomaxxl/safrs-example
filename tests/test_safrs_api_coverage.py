@@ -367,3 +367,69 @@ def test_http_method_decorator_maps_db_input_errors_to_client_errors(app, monkey
 
     assert abort_calls[-1][0] == 409
     assert abort_calls[-1][1][0]["detail"] == "Database constraint violation"
+
+
+def test_http_method_decorator_maps_flush_time_relationship_conflicts_to_409(app, monkeypatch):
+    abort_calls = []
+    calls = {"rollback": 0}
+
+    def fake_abort(status_code, errors=None):
+        abort_calls.append((status_code, errors))
+        raise RuntimeError("aborted")
+
+    class Session:
+        def commit(self):
+            raise sqlalchemy.orm.exc.FlushError("dependency rule tried to blank-out primary key column")
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs_api, "abort", fake_abort)
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    def flush_conflict_write(*_a, **_k):
+        safrs_tx.note_write(CommitModel)
+        return {"ok": True}
+
+    wrapped = safrs_api.http_method_decorator(flush_conflict_write)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        with pytest.raises(RuntimeError):
+            wrapped()
+
+    assert abort_calls[-1][0] == 409
+    assert abort_calls[-1][1][0]["detail"] == "Relationship update violates DB constraints"
+    assert calls["rollback"] == 1
+
+
+def test_http_method_decorator_maps_pk_blank_assertions_to_409(app, monkeypatch):
+    abort_calls = []
+    calls = {"rollback": 0}
+
+    def fake_abort(status_code, errors=None):
+        abort_calls.append((status_code, errors))
+        raise RuntimeError("aborted")
+
+    class Session:
+        def commit(self):
+            return None
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs_api, "abort", fake_abort)
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    def unsafe_relationship_write(*_a, **_k):
+        raise AssertionError("Dependency rule tried to blank-out primary key column 'Reviews.book_id'")
+
+    wrapped = safrs_api.http_method_decorator(unsafe_relationship_write)
+    with app.test_request_context("/", method="PATCH", headers={"Content-Type": "application/vnd.api+json"}):
+        with pytest.raises(RuntimeError):
+            wrapped()
+
+    assert abort_calls[-1][0] == 409
+    assert abort_calls[-1][1][0]["detail"] == "Relationship update violates DB constraints"
+    assert calls["rollback"] == 1
