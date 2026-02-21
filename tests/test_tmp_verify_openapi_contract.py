@@ -321,6 +321,78 @@ def test_patch_spec_with_seed_relationship_path_params_override_global_id() -> N
     assert person_param["default"] == "2"
 
 
+def test_patch_spec_with_seed_translates_object_id_for_relationship() -> None:
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/api/People/{object_id}/books_read": {
+                "patch": {
+                    "summary": "Update the Person books_read relationship",
+                    "parameters": [
+                        {"name": "object_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "requestBody": {
+                        "content": {
+                            "application/vnd.api+json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "type": {"type": "string", "enum": ["Book"]},
+                                                    "id": {"type": "string"},
+                                                },
+                                            },
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+    seed = {
+        "PersonId": "1",
+        "relationship_path_params": {"People.books_read": {"PersonId": "2"}},
+        "relationships": {"People.books_read": {"data": [{"type": "Book", "id": "book-2"}]}},
+    }
+
+    patched = _patch_spec_with_seed(spec, seed)
+    params = patched["paths"]["/api/People/{object_id}/books_read"]["patch"]["parameters"]
+    obj_param = next(param for param in params if param.get("name") == "object_id")
+    assert obj_param["enum"] == ["2"]
+    assert obj_param["default"] == "2"
+
+
+def test_patch_spec_with_seed_translates_object_id_for_instance_path() -> None:
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/api/Books/{object_id}": {
+                "get": {
+                    "parameters": [
+                        {"name": "object_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+    seed = {"BookId": "book-1", "relationship_path_params": {}, "relationships": {}}
+
+    patched = _patch_spec_with_seed(spec, seed)
+    params = patched["paths"]["/api/Books/{object_id}"]["get"]["parameters"]
+    obj_param = next(param for param in params if param.get("name") == "object_id")
+    assert obj_param["enum"] == ["book-1"]
+    assert obj_param["default"] == "book-1"
+
+
 def test_patch_spec_with_seed_relationship_path_params_missing_raises() -> None:
     spec = {
         "swagger": "2.0",
