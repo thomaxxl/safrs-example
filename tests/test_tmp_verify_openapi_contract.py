@@ -14,6 +14,29 @@ import verify_openapi_contract as contract_verifier
 from verify_openapi_contract import _patch_spec_with_seed
 
 
+def _iter_seed_identifiers(payload: dict[str, object]) -> list[dict[str, str]]:
+    relationships = payload.get("relationships")
+    assert isinstance(relationships, dict)
+    identifiers: list[dict[str, str]] = []
+    for rel_doc in relationships.values():
+        assert isinstance(rel_doc, dict)
+        assert set(rel_doc.keys()) == {"data"}
+        data = rel_doc["data"]
+        if isinstance(data, list):
+            assert data
+            items = data
+        else:
+            assert isinstance(data, dict)
+            items = [data]
+        for identifier in items:
+            assert isinstance(identifier, dict)
+            assert set(identifier.keys()) == {"type", "id"}
+            assert isinstance(identifier["type"], str) and identifier["type"]
+            assert isinstance(identifier["id"], str) and identifier["id"]
+            identifiers.append({"type": identifier["type"], "id": identifier["id"]})
+    return identifiers
+
+
 def test_patch_spec_with_seed_sets_path_and_body_enums() -> None:
     spec = {
         "swagger": "2.0",
@@ -328,6 +351,102 @@ def test_tmp_fastapi_seed_endpoint_returns_stable_ids(monkeypatch: pytest.Monkey
     assert payload["relationships"]["Books.publisher"]["data"]["id"]
     assert payload["relationships"]["Books.reviews"]["data"]
     assert payload["relationships"]["Publishers.books"]["data"]
+
+
+def test_tmp_flask_seed_endpoint_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app = create_tmp_flask_app(db_name="tmp_flask_seed_deterministic_test.db")
+        with app.test_client() as client:
+            first = client.get("/seed").get_json()
+            second = client.get("/seed").get_json()
+    finally:
+        setattr(safrs, "DB", original_db)
+    assert first == second
+
+
+def test_tmp_seed_relationship_payloads_use_jsonapi_resource_identifiers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app = create_tmp_flask_app(db_name="tmp_flask_seed_identifier_shape_test.db")
+        with app.test_client() as client:
+            payload = client.get("/seed").get_json()
+    finally:
+        setattr(safrs, "DB", original_db)
+
+    identifiers = _iter_seed_identifiers(payload)
+    assert identifiers
+
+
+def test_tmp_seed_relationship_payloads_reference_real_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+    from models import Book, Person, Publisher, Review
+
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app = create_tmp_flask_app(db_name="tmp_flask_seed_relationship_rows_test.db")
+        with app.test_client() as client:
+            payload = client.get("/seed").get_json()
+        type_map = {
+            str(Person._s_type): Person,
+            str(Book._s_type): Book,
+            str(Publisher._s_type): Publisher,
+            str(Review._s_type): Review,
+        }
+        for key, model_cls in {
+            "PersonId": Person,
+            "FriendId": Person,
+            "BookId": Book,
+            "PublisherId": Publisher,
+            "ReviewId": Review,
+        }.items():
+            assert model_cls.get_instance(payload[key]) is not None
+
+        for identifier in _iter_seed_identifiers(payload):
+            model_cls = type_map[identifier["type"]]
+            assert model_cls.get_instance(identifier["id"]) is not None
+    finally:
+        setattr(safrs, "DB", original_db)
+
+
+def test_tmp_flask_seed_relationship_mutations_are_not_server_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app = create_tmp_flask_app(db_name="tmp_flask_seed_relationship_mutation_test.db")
+        with app.test_client() as client:
+            seed = client.get("/seed").get_json()
+            to_one_response = client.patch(
+                f"/api/Books/{seed['BookId']}/author",
+                json=seed["relationships"]["Books.author"],
+            )
+            to_many_response = client.post(
+                f"/api/People/{seed['PersonId']}/friends",
+                json=seed["relationships"]["People.friends"],
+            )
+    finally:
+        setattr(safrs, "DB", original_db)
+
+    for response in (to_one_response, to_many_response):
+        assert response.status_code < 500
+        assert (200 <= response.status_code < 300) or response.status_code in {
+            HTTPStatus.BAD_REQUEST,
+            HTTPStatus.FORBIDDEN,
+            HTTPStatus.CONFLICT,
+        }
+        if response.status_code >= 400:
+            payload = response.get_json()
+            assert isinstance(payload, dict)
+            assert "errors" in payload
 
 
 def test_tmp_flask_reset_enabled_by_default_recreates_seed_state(monkeypatch: pytest.MonkeyPatch) -> None:
