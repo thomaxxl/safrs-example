@@ -1,5 +1,6 @@
 import sys
 import json
+import re
 from http import HTTPStatus
 from pathlib import Path
 
@@ -393,6 +394,65 @@ def test_patch_spec_with_seed_translates_object_id_for_instance_path() -> None:
     assert obj_param["default"] == "book-1"
 
 
+def test_patch_spec_with_seed_resolves_ref_relationship_schema() -> None:
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/api/People/{object_id}/books_read": {
+                "patch": {
+                    "summary": "Update the Person books_read relationship",
+                    "parameters": [
+                        {"name": "object_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "requestBody": {
+                        "content": {
+                            "application/vnd.api+json": {
+                                "schema": {"$ref": "#/components/schemas/PersonRelationshipDocumentToMany"}
+                            }
+                        }
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "PersonRelationshipDocumentToMany": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string", "enum": ["Book"]},
+                                    "id": {"type": "string"},
+                                },
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+    seed = {
+        "PersonId": "1",
+        "relationship_path_params": {"People.books_read": {"PersonId": "2"}},
+        "relationships": {"People.books_read": {"data": [{"type": "Book", "id": "book-2"}]}},
+    }
+
+    patched = _patch_spec_with_seed(spec, seed)
+    request_body_schema = patched["paths"]["/api/People/{object_id}/books_read"]["patch"]["requestBody"]["content"][
+        "application/vnd.api+json"
+    ]["schema"]
+    assert request_body_schema["$ref"] == "#/components/schemas/PersonRelationshipDocumentToMany"
+    rel_schema = patched["components"]["schemas"]["PersonRelationshipDocumentToMany"]
+    assert rel_schema["properties"]["data"]["items"]["properties"]["id"]["enum"] == ["book-2"]
+    params = patched["paths"]["/api/People/{object_id}/books_read"]["patch"]["parameters"]
+    obj_param = next(param for param in params if param.get("name") == "object_id")
+    assert obj_param["enum"] == ["2"]
+
+
 def test_patch_spec_with_seed_relationship_path_params_missing_raises() -> None:
     spec = {
         "swagger": "2.0",
@@ -514,6 +574,56 @@ def test_tmp_fastapi_seed_endpoint_returns_stable_ids(monkeypatch: pytest.Monkey
     assert payload["relationship_path_params"]["People.books_read"]["PersonId"]
     assert payload["relationship_path_params"]["Books.publisher"]["BookId"]
     assert payload["relationship_path_params"]["Publishers.books"]["PublisherId"]
+
+
+def test_tmp_fastapi_openapi_includes_payload_request_component_schemas(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi_app import create_app as create_tmp_fastapi_app
+
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app = create_tmp_fastapi_app(db_name="tmp_fastapi_openapi_request_components.db")
+        openapi = app.openapi()
+    finally:
+        setattr(safrs, "DB", original_db)
+
+    schemas = openapi["components"]["schemas"]
+    required = {
+        "BookDocumentCreate",
+        "BookDocumentPatch",
+        "BookRelationshipDocumentToMany",
+        "PersonDocumentCreate",
+        "PersonDocumentPatch",
+        "PersonRelationshipDocumentToMany",
+        "PersonRelationshipDocumentToOne",
+        "PublisherDocumentCreate",
+        "PublisherDocumentPatch",
+        "PublisherRelationshipDocumentToOne",
+        "ReviewDocumentCreate",
+        "ReviewRelationshipDocumentToMany",
+    }
+    missing = sorted(required - set(schemas.keys()))
+    assert missing == []
+
+
+def test_tmp_fastapi_openapi_component_refs_are_resolvable(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi_app import create_app as create_tmp_fastapi_app
+
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app = create_tmp_fastapi_app(db_name="tmp_fastapi_openapi_component_refs.db")
+        openapi = app.openapi()
+    finally:
+        setattr(safrs, "DB", original_db)
+
+    schemas = openapi.get("components", {}).get("schemas", {})
+    assert isinstance(schemas, dict)
+    refs = set(re.findall(r'"\\$ref"\\s*:\\s*"#/components/schemas/([^"]+)"', json.dumps(openapi)))
+    missing = sorted(ref for ref in refs if ref not in schemas)
+    assert missing == []
 
 
 def test_tmp_flask_seed_endpoint_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
