@@ -330,6 +330,104 @@ def test_tmp_fastapi_seed_endpoint_returns_stable_ids(monkeypatch: pytest.Monkey
     assert payload["relationships"]["Publishers.books"]["data"]
 
 
+def test_tmp_flask_reset_enabled_by_default_recreates_seed_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+    from models import Publisher
+
+    monkeypatch.setenv("SAFRS_TMP_DB", "tmp_flask_step4a_reset_default.db")
+    monkeypatch.delenv("SAFRS_TMP_RESET_DB", raising=False)
+    monkeypatch.delenv("SAFRS_TMP_DB_DIR", raising=False)
+    original_db = getattr(safrs, "DB", None)
+    try:
+        create_tmp_flask_app(port=5601)
+        session = safrs.DB.session
+        seed_count = session.query(Publisher).count()
+        session.add(Publisher(name="step4a-reset-default-extra"))
+        session.commit()
+        assert session.query(Publisher).count() == seed_count + 1
+        session.remove()
+
+        create_tmp_flask_app(port=5601)
+        restarted_count = safrs.DB.session.query(Publisher).count()
+        assert restarted_count == seed_count
+    finally:
+        setattr(safrs, "DB", original_db)
+
+
+def test_tmp_flask_reset_off_preserves_mutations(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+    from models import Publisher
+
+    monkeypatch.setenv("SAFRS_TMP_DB", "tmp_flask_step4a_reset_off.db")
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "0")
+    monkeypatch.delenv("SAFRS_TMP_DB_DIR", raising=False)
+    original_db = getattr(safrs, "DB", None)
+    try:
+        create_tmp_flask_app(port=5602)
+        session = safrs.DB.session
+        seed_count = session.query(Publisher).count()
+        session.add(Publisher(name="step4a-reset-off-extra"))
+        session.commit()
+        assert session.query(Publisher).count() == seed_count + 1
+        session.remove()
+
+        create_tmp_flask_app(port=5602)
+        restarted_count = safrs.DB.session.query(Publisher).count()
+        assert restarted_count == seed_count + 1
+    finally:
+        monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+        setattr(safrs, "DB", original_db)
+
+
+def test_tmp_flask_default_db_name_is_port_specific(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from flask_app import create_app as create_tmp_flask_app
+
+    monkeypatch.delenv("SAFRS_TMP_DB", raising=False)
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    monkeypatch.setenv("SAFRS_TMP_DB_DIR", str(tmp_path))
+    original_db = getattr(safrs, "DB", None)
+    try:
+        app_a = create_tmp_flask_app(port=5603)
+        with app_a.test_client() as client_a:
+            db_a = Path(client_a.get("/health").get_json()["db"])
+
+        app_b = create_tmp_flask_app(port=5604)
+        with app_b.test_client() as client_b:
+            db_b = Path(client_b.get("/health").get_json()["db"])
+    finally:
+        setattr(safrs, "DB", original_db)
+
+    assert db_a != db_b
+    assert "5603" in db_a.name
+    assert "5604" in db_b.name
+
+
+def test_tmp_db_dir_env_is_honored_by_flask_and_fastapi(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from fastapi_app import create_app as create_tmp_fastapi_app
+    from flask_app import create_app as create_tmp_flask_app
+
+    monkeypatch.setenv("SAFRS_TMP_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("SAFRS_TMP_RESET_DB", "1")
+    original_db = getattr(safrs, "DB", None)
+    try:
+        monkeypatch.setenv("SAFRS_TMP_DB", "step4a_flask_dir.db")
+        flask_app = create_tmp_flask_app(port=5605)
+        with flask_app.test_client() as client:
+            flask_db = Path(client.get("/health").get_json()["db"])
+
+        monkeypatch.setenv("SAFRS_TMP_DB", "step4a_fastapi_dir.db")
+        fastapi_app = create_tmp_fastapi_app()
+        with TestClient(fastapi_app) as client:
+            fastapi_db = Path(client.get("/health").json()["db"])
+    finally:
+        setattr(safrs, "DB", original_db)
+
+    assert flask_db.parent == tmp_path
+    assert fastapi_db.parent == tmp_path
+
+
 def test_tmp_flask_spec_seed_patch_requires_relationship_seed_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     from flask_app import create_app as create_tmp_flask_app
 
