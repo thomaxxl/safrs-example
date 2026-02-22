@@ -81,6 +81,23 @@ class FastClientIdThing(SAFRSBase, Base):
     name = Column(String)
 
 
+class FastLegacyIdThing(SAFRSBase, Base):
+    __tablename__ = "FastLegacyIdThings"
+    allow_client_generated_ids = True
+
+    Id = Column(String, primary_key=True)
+    name = Column(String)
+
+
+class FastCompositeIdThing(SAFRSBase, Base):
+    __tablename__ = "FastCompositeIdThings"
+    allow_client_generated_ids = True
+
+    country = Column(String, primary_key=True)
+    city = Column(String, primary_key=True)
+    name = Column(String)
+
+
 class FastLimitedThing(SAFRSBase, Base):
     __tablename__ = "FastLimitedThings"
     http_methods = {"GET", "POST"}
@@ -257,6 +274,8 @@ def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) 
     assert _response_schema_ref(things_post, "201").endswith("/FastThingDocumentSingle")
     assert _response_schema_ref(thing_patch, "200").endswith("/FastThingDocumentSingle")
     assert _response_schema_ref(things_get, "400").endswith("/JsonApiErrorDocument")
+    assert "id" not in schemas["FastThingCreateResource"].get("required", [])
+    assert "id" in schemas["FastThingPatchResource"].get("required", [])
 
     post_request_ref = things_post["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
     patch_request_ref = thing_patch["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
@@ -298,10 +317,92 @@ def test_fastapi_create_example_includes_id_for_client_generated_ids() -> None:
         api.expose_object(FastClientIdThing)
 
         with TestClient(app) as client:
-            paths = client.get("/openapi.json").json()["paths"]
+            openapi = client.get("/openapi.json").json()
+            paths = openapi["paths"]
+            schemas = openapi["components"]["schemas"]
             create_example = paths["/FastClientIdThings"]["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["example"]
             assert create_example["data"]["type"] == "FastClientIdThing"
             assert "id" in create_example["data"]
+            assert "id" in schemas["FastClientIdThingCreateResource"]["required"]
+            assert "id" in schemas["FastClientIdThingPatchResource"]["required"]
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_post_nonstandard_client_generated_id_is_validated_and_mapped() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastLegacyIdThing)
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            missing_id = client.post(
+                "/FastLegacyIdThings",
+                json={
+                    "data": {
+                        "type": "FastLegacyIdThing",
+                        "attributes": {"name": "missing-id"},
+                    }
+                },
+            )
+            assert missing_id.status_code == 400
+            assert "Missing resource id" in missing_id.json()["errors"][0]["detail"]
+
+            created = client.post(
+                "/FastLegacyIdThings",
+                json={
+                    "data": {
+                        "type": "FastLegacyIdThing",
+                        "id": "legacy-1",
+                        "attributes": {"name": "created"},
+                    }
+                },
+            )
+            assert created.status_code == 201
+            assert created.json()["data"]["id"] == "legacy-1"
+            stored = Session.query(FastLegacyIdThing).filter_by(Id="legacy-1").one_or_none()
+            assert stored is not None
+            assert stored.name == "created"
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_extract_pks_accepts_jsonapi_id_when_pk_column_names_are_not_id() -> None:
+    assert FastLegacyIdThing.id_type.extract_pks({"id": "legacy-2"}) == {"Id": "legacy-2"}
+    assert FastCompositeIdThing.id_type.extract_pks({"id": "US_Boston"}) == {"country": "US", "city": "Boston"}
+
+
+def test_s_post_accepts_explicit_pk_columns_for_client_generated_composite_id() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        created = FastCompositeIdThing._s_post(None, country="US", city="Austin", name="capital")
+        Session.flush()
+        assert created.country == "US"
+        assert created.city == "Austin"
+        assert str(created.jsonapi_id) == "US_Austin"
     finally:
         Session.remove()
         Base.metadata.drop_all(engine)

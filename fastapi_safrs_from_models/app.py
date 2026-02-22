@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -42,13 +43,40 @@ def _resolve_db_path(explicit_db_path: str | None = None) -> Path:
     return (PROJECT_ROOT / path).resolve()
 
 
+def _should_isolate_db_per_run() -> bool:
+    value = os.environ.get("SAFRS_ISOLATE_DB_PER_RUN", "0").strip().lower()
+    return value in ("1", "true", "yes")
+
+
+def _resolve_runtime_db_path(base_db_path: Path) -> Path:
+    if not _should_isolate_db_per_run():
+        return base_db_path
+    if not base_db_path.exists():
+        raise FileNotFoundError(f"Baseline sqlite database not found: {base_db_path}")
+
+    run_db_override = os.environ.get("SAFRS_RUN_DB_PATH", "").strip()
+    if run_db_override:
+        run_db_path = Path(run_db_override).expanduser()
+        if not run_db_path.is_absolute():
+            run_db_path = (PROJECT_ROOT / run_db_path).resolve()
+    else:
+        run_dir = Path(os.environ.get("SAFRS_RUN_DB_DIR", "/tmp")).expanduser()
+        run_id = os.environ.get("SAFRS_RUN_DB_ID", "").strip() or str(os.getpid())
+        run_db_path = (run_dir / f"{base_db_path.stem}_{run_id}{base_db_path.suffix}").resolve()
+
+    run_db_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(base_db_path, run_db_path)
+    return run_db_path
+
+
 def create_app(db_path: str | None = None) -> FastAPI:
     resolved_db_path = _resolve_db_path(explicit_db_path=db_path)
-    resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
-    if _should_reset_db() and resolved_db_path.exists():
-        resolved_db_path.unlink()
+    runtime_db_path = _resolve_runtime_db_path(resolved_db_path)
+    runtime_db_path.parent.mkdir(parents=True, exist_ok=True)
+    if _should_reset_db() and runtime_db_path.exists():
+        runtime_db_path.unlink()
 
-    Session = create_session(resolved_db_path)
+    Session = create_session(runtime_db_path)
     wrapper = SAFRSDBWrapper(Session, Base)
     setattr(safrs, "DB", wrapper)
 
@@ -80,7 +108,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         return {
             "ok": True,
             "framework": "fastapi",
-            "db": str(resolved_db_path),
+            "db": str(runtime_db_path),
             "api_prefix": API_PREFIX,
             "models": [model.__name__ for model in EXPOSED_MODELS],
         }
@@ -92,5 +120,5 @@ if __name__ == "__main__":
     import uvicorn
 
     bind_host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-    bind_port = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
+    bind_port = int(sys.argv[2]) if len(sys.argv) > 2 else 5656
     uvicorn.run(create_app(), host=bind_host, port=bind_port)

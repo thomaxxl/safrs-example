@@ -24,7 +24,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, relationship, scoped_session
 
 API_PREFIX = "/api"
 DESCRIPTION = "SAFRS FastAPI app exposing cleaned models derived from /tmp/models.py"
-DEFAULT_DB_PATH = Path("/home/t/lab/ALS/ApiLogicProject/database/db.sqlite")
+HERE = Path(__file__).resolve().parent
+DEFAULT_DB_PATH = HERE / "db.sqlite"
 
 
 class Base(DeclarativeBase):
