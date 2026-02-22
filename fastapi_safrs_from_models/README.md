@@ -11,13 +11,13 @@ venv/bin/python fastapi_safrs_from_models/app.py
 
 Then open:
 
-- `http://127.0.0.1:8000/health`
-- `http://127.0.0.1:8000/docs`
-- `http://127.0.0.1:8000/api`
+- `http://127.0.0.1:5656/health`
+- `http://127.0.0.1:5656/docs`
+- `http://127.0.0.1:5656/api`
 
 ## Environment Variables
 
-- `SAFRS_SQLITE_PATH` (default: `/home/t/lab/ALS/ApiLogicProject/database/db.sqlite`)
+- DB path is hardcoded to `fastapi_safrs_from_models/db.sqlite`
 - `SAFRS_RESET_DB` (set to `1`/`true`/`yes` to delete the DB file before startup)
 
 ## Notes

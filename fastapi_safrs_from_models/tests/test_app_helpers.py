@@ -22,9 +22,10 @@ def test_models_default_db_path_is_project_local() -> None:
     assert models_module.DEFAULT_DB_PATH == expected
 
 
-def test_resolve_db_path_with_relative_override() -> None:
+def test_resolve_db_path_ignores_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("SAFRS_SQLITE_PATH", "/tmp/override.sqlite")
     resolved = app_module._resolve_db_path(explicit_db_path="db/custom.sqlite")
-    assert resolved == (app_module.PROJECT_ROOT / "db/custom.sqlite").resolve()
+    assert resolved == models_module.DEFAULT_DB_PATH
 
 
 def test_resolve_runtime_db_path_with_isolation_enabled(monkeypatch, tmp_path: Path) -> None:

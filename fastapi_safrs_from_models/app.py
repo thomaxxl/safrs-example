@@ -29,18 +29,7 @@ def _should_reset_db() -> bool:
 
 
 def _resolve_db_path(explicit_db_path: str | None = None) -> Path:
-    if explicit_db_path:
-        path = Path(explicit_db_path).expanduser()
-    else:
-        env_db_path = os.environ.get("SAFRS_SQLITE_PATH", "").strip()
-        if env_db_path:
-            path = Path(env_db_path).expanduser()
-        else:
-            return DEFAULT_DB_PATH
-
-    if path.is_absolute():
-        return path
-    return (PROJECT_ROOT / path).resolve()
+    return DEFAULT_DB_PATH
 
 
 def _should_isolate_db_per_run() -> bool:
