@@ -110,4 +110,4 @@ if __name__ == "__main__":
 
     bind_host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
     bind_port = int(sys.argv[2]) if len(sys.argv) > 2 else 5656
-    uvicorn.run(create_app(), host=bind_host, port=bind_port)
+    uvicorn.run(create_app(), host=bind_host, port=bind_port, log_level="debug")
