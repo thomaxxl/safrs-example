@@ -14,6 +14,7 @@ services:
       PYTHONPATH: "${PYTHONPATH}:/app/safrs:/app/src/safrs"
       SWAGGER_HOST: 192.168.193.135
       SWAGGER_PORT: 1237
+      SAFRS_BACKEND: fastapi
     ports:
       - 1237:80
     volumes:
