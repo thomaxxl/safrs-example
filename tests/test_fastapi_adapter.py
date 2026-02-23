@@ -1,5 +1,6 @@
 import json
 import datetime as dt
+import decimal
 from types import SimpleNamespace
 from typing import Any, Generator
 
@@ -11,7 +12,7 @@ from safrs import SAFRSBase
 from safrs import tx
 from safrs.errors import JsonapiError, SystemValidationError, ValidationError
 from safrs.swagger_doc import jsonapi_rpc
-from sqlalchemy import Column, ForeignKey, Integer, String, create_engine
+from sqlalchemy import DECIMAL, Column, ForeignKey, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, relationship, scoped_session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -27,6 +28,7 @@ from safrs.fastapi.api import (
     install_jsonapi_exception_handlers,
 )
 from safrs.fastapi.responses import JSONAPIResponse
+from safrs.fastapi.schemas.from_sqlalchemy import _jsonapi_attr_return_type, _safe_python_type
 
 
 Base = declarative_base()
@@ -96,6 +98,13 @@ class FastCompositeIdThing(SAFRSBase, Base):
     country = Column(String, primary_key=True)
     city = Column(String, primary_key=True)
     name = Column(String)
+
+
+class FastDecimalThing(SAFRSBase, Base):
+    __tablename__ = "FastDecimalThings"
+
+    id = Column(Integer, primary_key=True)
+    price = Column(DECIMAL)
 
 
 class FastLimitedThing(SAFRSBase, Base):
@@ -407,6 +416,49 @@ def test_s_post_accepts_explicit_pk_columns_for_client_generated_composite_id() 
         Session.remove()
         Base.metadata.drop_all(engine)
         safrs.DB = original_db
+
+
+def test_fastapi_openapi_decimal_columns_use_number_schema() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastDecimalThing)
+
+        with TestClient(app) as client:
+            openapi = client.get("/openapi.json").json()
+            attrs = openapi["components"]["schemas"]["FastDecimalThingAttributes"]["properties"]
+            price_schema = attrs["price"]
+            any_of = price_schema.get("anyOf", [])
+            types = {entry.get("type") for entry in any_of if isinstance(entry, dict)}
+
+            assert "number" in types
+            assert "string" not in types
+            assert "pattern" not in json.dumps(price_schema)
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_decimal_type_normalization_helpers() -> None:
+    assert _safe_python_type(Column("amount", DECIMAL)) is float
+
+    class DecimalAnnotated:
+        @property
+        def total(self) -> decimal.Decimal:
+            return decimal.Decimal("0")
+
+    assert _jsonapi_attr_return_type(DecimalAnnotated, "total") is float
 
 
 def test_fastapi_crud_route_registration_respects_model_http_methods() -> None:
