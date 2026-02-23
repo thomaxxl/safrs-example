@@ -3,6 +3,7 @@ import datetime as dt
 import decimal
 from types import SimpleNamespace
 from typing import Any, Generator
+from urllib.parse import quote
 
 import pytest
 
@@ -13,7 +14,9 @@ from safrs import tx
 from safrs.errors import JsonapiError, SystemValidationError, ValidationError
 from safrs.swagger_doc import jsonapi_rpc
 from sqlalchemy import DECIMAL, Column, ForeignKey, Integer, String, create_engine
+from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, StatementError
 from sqlalchemy.orm import declarative_base, relationship, scoped_session, sessionmaker
+from sqlalchemy.orm.exc import FlushError
 from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
@@ -1327,6 +1330,47 @@ def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> 
     assert encoded["attributes"]["name"] is None
 
 
+def test_fastapi_maps_sqlalchemy_errors_to_jsonapi_errors_with_rollback(fastapi_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    api = fastapi_client.app.state.safrs_api
+    rollback_calls = {"count": 0}
+
+    def fake_rollback() -> None:
+        rollback_calls["count"] += 1
+
+    monkeypatch.setattr(safrs.DB.session, "rollback", fake_rollback)
+
+    cases = [
+        (IntegrityError("stmt", {}, Exception("orig")), 409, "Database constraint violation"),
+        (DataError("stmt", {}, Exception("orig")), 400, "Invalid attribute value"),
+        (StatementError("msg", "stmt", {}, Exception("orig")), 400, "Invalid attribute value"),
+        (OverflowError("too big"), 400, "Invalid attribute value"),
+        (FlushError("flush failed"), 409, "Relationship update violates DB constraints"),
+        (InvalidRequestError("invalid request"), 409, "Relationship update violates DB constraints"),
+    ]
+
+    for error, expected_status, expected_detail in cases:
+        with pytest.raises(JSONAPIHTTPError) as exc_info:
+            api._handle_safrs_exception(error)
+        assert exc_info.value.status_code == expected_status
+        assert exc_info.value.payload["errors"][0]["detail"] == expected_detail
+
+    assert rollback_calls["count"] == len(cases)
+
+
+def test_fastapi_build_post_response_sets_prefixed_quoted_location_header() -> None:
+    api = SafrsFastAPI(FastAPI(), prefix="/api")
+
+    class LocationModel:
+        _s_type = "LocationModel"
+        _s_collection_name = "LocationModels"
+        _s_jsonapi_attrs: dict[str, Any] = {}
+
+    created = [SimpleNamespace(jsonapi_id="ümlaut/space here")]
+    response = api._build_post_response(LocationModel, created, wanted_fields=None, include_paths=[], included=[])
+    assert response.status_code == 201
+    assert response.headers["location"] == f"/api/LocationModels/{quote('ümlaut/space here', safe='')}"
+
+
 def test_fastapi_rpc_request_context_parses_query_string() -> None:
     request = _request("fields[FastBook]=&page[offset]=1")
     with SafrsFastAPI._rpc_request_context(request):
@@ -1616,6 +1660,11 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         {"data": {"type": "FastAuthor", "id": str(author2.id)}},
     )
     assert patched_toone_set.status_code == 204
+
+    with pytest.raises(JSONAPIHTTPError) as missing_data_exc:
+        api._patch_relationship(FastBook, "author")(str(book_other.id), {})
+    assert missing_data_exc.value.status_code == 400
+    assert "Missing 'data' member" in missing_data_exc.value.payload["errors"][0]["detail"]
 
     with pytest.raises(JSONAPIHTTPError):
         api._patch_relationship(FastBook, "unknown_rel")("1", {"data": None})
