@@ -8,6 +8,7 @@ pytest-cov
 pyrsistent
 flask_httpauth
 requests
+schemathesis>=4,<5
 flask_cors
 safrs
 SQLAlchemy
