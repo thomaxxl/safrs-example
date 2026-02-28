@@ -11,7 +11,7 @@ from safrs_verify.contract import ContractRunOptions, run_contract_target
 from safrs_verify.db import BackendUnavailable, resolve_db_backends
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.contract
@@ -42,7 +42,7 @@ def test_contract_targets_run_with_runtime_spec_discovery() -> None:
         except BackendUnavailable as exc:
             pytest.skip(f"sqlite backend unavailable: {exc}")
         except PermissionError as exc:
-            pytest.skip(f"sandbox does not permit local socket binding: {exc}")
+            pytest.skip(f"local socket binding not permitted in this environment: {exc}")
 
         if result.returncode != 0:
             failures.append(

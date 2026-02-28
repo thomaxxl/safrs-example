@@ -14,7 +14,7 @@ from safrs_verify.runner import AppRunner
 from safrs_verify.spec import discover_spec
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parity
@@ -51,7 +51,7 @@ def test_runtime_swagger2_openapi3_parity() -> None:
                 fetched = discover_spec(runner.base_url or "", candidates=fastapi_target.spec_candidates)
                 fastapi_spec = fetched.spec
         except PermissionError as exc:
-            pytest.skip(f"sandbox does not permit local socket binding: {exc}")
+            pytest.skip(f"local socket binding not permitted in this environment: {exc}")
     finally:
         backend.cleanup(flask_run_id)
         backend.cleanup(fastapi_run_id)

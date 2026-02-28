@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-TMP_DIR = Path(__file__).resolve().parents[2] / "safrs" / "tmp"
+TMP_DIR = Path(__file__).resolve().parents[1] / "safrs" / "tmp"
 if str(TMP_DIR) not in sys.path:
     sys.path.insert(0, str(TMP_DIR))
 
