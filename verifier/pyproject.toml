@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safrs-example-verifier"
+version = "0.1.0"
+description = "Standalone SAFRS schema verifier"
+requires-python = ">=3.10"
+dependencies = [
+  "pytest",
+  "requests",
+  "schemathesis>=4,<5",
+  "flask",
+  "flask-cors",
+  "fastapi",
+  "uvicorn",
+  "sqlalchemy",
+  "safrs",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+markers = [
+  "contract: schemathesis contract tests",
+  "parity: schema parity tests",
+  "slow: slower tests",
+]

@@ -1,0 +1,10 @@
+.artifacts/
+.hypothesis/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+openapi.json
+swagger.json
+verify.log

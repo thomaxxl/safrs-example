@@ -8,10 +8,11 @@ import pytest
 pytest.importorskip("fastapi")
 
 from safrs.fastapi.openapi import diff_openapi_documents
+from safrs_verify.artifacts import cleanup_artifacts, create_artifact_bundle
 from safrs_verify.config import default_contract_targets
-from safrs_verify.db.sqlite import SQLiteBackend
 from safrs_verify.runner import AppRunner
 from safrs_verify.spec import discover_spec
+from safrs_verify.sqlite_db import prepare_sqlite_env
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -21,15 +22,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.slow
 def test_runtime_swagger2_openapi3_parity() -> None:
     targets = {target.name: target for target in default_contract_targets(PROJECT_ROOT)}
-    flask_target = targets["tmp-flask"]
-    fastapi_target = targets["tmp-fastapi"]
+    flask_target = targets["flask"]
+    fastapi_target = targets["fastapi"]
 
-    backend = SQLiteBackend()
     flask_run_id = "parity_flask_" + uuid.uuid4().hex[:8]
     fastapi_run_id = "parity_fastapi_" + uuid.uuid4().hex[:8]
 
-    flask_env = backend.provision(flask_run_id)
-    fastapi_env = backend.provision(fastapi_run_id)
+    flask_bundle = create_artifact_bundle(flask_run_id)
+    fastapi_bundle = create_artifact_bundle(fastapi_run_id)
+    flask_env = prepare_sqlite_env(flask_bundle).env
+    fastapi_env = prepare_sqlite_env(fastapi_bundle).env
 
     flask_spec: dict[str, object]
     fastapi_spec: dict[str, object]
@@ -53,8 +55,8 @@ def test_runtime_swagger2_openapi3_parity() -> None:
         except PermissionError as exc:
             pytest.skip(f"local socket binding not permitted in this environment: {exc}")
     finally:
-        backend.cleanup(flask_run_id)
-        backend.cleanup(fastapi_run_id)
+        cleanup_artifacts(flask_bundle)
+        cleanup_artifacts(fastapi_bundle)
 
     assert str(flask_spec.get("swagger", "")) == "2.0"
     assert "openapi" in fastapi_spec
