@@ -23,12 +23,7 @@ def test_contract_targets_run_with_runtime_spec_discovery() -> None:
 
     failures: list[str] = []
     for target in default_contract_targets(Path(__file__).resolve().parents[1]):
-        try:
-            result = run_contract_target(target, options=options)
-        except PermissionError as exc:
-            pytest.skip(f"local socket binding not permitted in this environment: {exc}")
-        except FileNotFoundError as exc:
-            pytest.skip(f"runtime dependency missing: {exc}")
+        result = run_contract_target(target, options=options)
 
         if result.returncode != 0:
             failures.append(

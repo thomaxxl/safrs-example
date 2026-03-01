@@ -36,24 +36,21 @@ def test_runtime_swagger2_openapi3_parity() -> None:
     flask_spec: dict[str, object]
     fastapi_spec: dict[str, object]
     try:
-        try:
-            with AppRunner(
-                app_path=flask_target.app_path,
-                health_path=flask_target.health_path,
-                env={**dict(flask_target.env), **flask_env},
-            ) as runner:
-                fetched = discover_spec(runner.base_url or "", candidates=flask_target.spec_candidates)
-                flask_spec = fetched.spec
+        with AppRunner(
+            app_path=flask_target.app_path,
+            health_path=flask_target.health_path,
+            env={**dict(flask_target.env), **flask_env},
+        ) as runner:
+            fetched = discover_spec(runner.base_url or "", candidates=flask_target.spec_candidates)
+            flask_spec = fetched.spec
 
-            with AppRunner(
-                app_path=fastapi_target.app_path,
-                health_path=fastapi_target.health_path,
-                env={**dict(fastapi_target.env), **fastapi_env},
-            ) as runner:
-                fetched = discover_spec(runner.base_url or "", candidates=fastapi_target.spec_candidates)
-                fastapi_spec = fetched.spec
-        except PermissionError as exc:
-            pytest.skip(f"local socket binding not permitted in this environment: {exc}")
+        with AppRunner(
+            app_path=fastapi_target.app_path,
+            health_path=fastapi_target.health_path,
+            env={**dict(fastapi_target.env), **fastapi_env},
+        ) as runner:
+            fetched = discover_spec(runner.base_url or "", candidates=fastapi_target.spec_candidates)
+            fastapi_spec = fetched.spec
     finally:
         cleanup_artifacts(flask_bundle)
         cleanup_artifacts(fastapi_bundle)

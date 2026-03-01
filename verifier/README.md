@@ -94,3 +94,20 @@ Demo app options (set by harness automatically):
 
 - `SAFRS_EXAMPLE_DB_PATH` (SQLite path per run)
 - `SAFRS_EXAMPLE_RESET_DB` (default `1`)
+
+## Troubleshooting
+
+If you see `PermissionError(1, 'Operation not permitted')` when verifier tests start apps,
+your environment is blocking local loopback sockets (`127.0.0.1` bind).
+
+Quick check:
+
+```bash
+../venv/bin/python -c "import socket; s=socket.socket(); s.bind(('127.0.0.1', 0)); print('ok', s.getsockname()); s.close()"
+```
+
+If that command fails, run verifier tests in an environment that allows local TCP bind:
+
+- local shell (not restricted sandbox)
+- CI/container without socket-restricting security profile
+- VM/dev container with loopback networking enabled

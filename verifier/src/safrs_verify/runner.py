@@ -17,10 +17,21 @@ class RunnerError(RuntimeError):
 
 
 def find_free_port(host: str) -> int:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except PermissionError as exc:
+        raise RunnerError(
+            f"Unable to create a local TCP socket on {host!r}. "
+            "Loopback networking is blocked by this environment."
+        ) from exc
     try:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+    except PermissionError as exc:
+        raise RunnerError(
+            f"Unable to bind a local TCP port on {host!r}. "
+            "Loopback networking is blocked by this environment."
+        ) from exc
     finally:
         sock.close()
 
