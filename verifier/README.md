@@ -7,7 +7,6 @@ This directory is self-contained and does **not** use the main `tests/` tree.
 From repo root:
 
 ```bash
-cd /home/t/lab/safrs-example
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -15,7 +14,7 @@ pip install -r requirements.txt
 ## Run Verifier Tests (standalone)
 
 ```bash
-cd /home/t/lab/safrs-example/verifier
+cd verifier
 pytest -q
 ```
 
