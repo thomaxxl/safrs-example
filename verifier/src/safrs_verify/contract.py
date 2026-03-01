@@ -28,8 +28,8 @@ class ContractRunOptions:
     port: int = 0
     startup_timeout_s: float = 15.0
     request_timeout_s: float = 10.0
-    max_examples: int = 5
-    phases: str = "examples"
+    max_examples: int = 25
+    phases: str = "examples,fuzzing"
     auth_header: str = ""
     content_type: str = "application/vnd.api+json"
     app_log_lines: int = 200
@@ -59,8 +59,8 @@ class ContractRunError(RuntimeError):
 
 def options_from_env() -> ContractRunOptions:
     return ContractRunOptions(
-        max_examples=int(os.environ.get("SAFRS_CONTRACT_MAX_EXAMPLES", "5")),
-        phases=os.environ.get("SAFRS_CONTRACT_PHASES", "examples"),
+        max_examples=int(os.environ.get("SAFRS_CONTRACT_MAX_EXAMPLES", "25")),
+        phases=os.environ.get("SAFRS_CONTRACT_PHASES", "examples,fuzzing"),
         request_timeout_s=float(os.environ.get("SAFRS_CONTRACT_REQUEST_TIMEOUT", "10")),
         app_log_lines=int(os.environ.get("SAFRS_VERIFY_APP_LOG_LINES", "200")),
     )

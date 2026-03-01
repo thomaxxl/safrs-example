@@ -38,7 +38,7 @@ def write_text(path: Path, text: str) -> None:
 
 
 def should_keep_artifacts(*, failed: bool, policy: ArtifactPolicy) -> bool:
-    if os.environ.get("SAFRS_VERIFY_KEEP_ARTIFACTS", "0").strip() in {"1", "true", "yes"}:
+    if os.environ.get("SAFRS_VERIFY_KEEP_ARTIFACTS", "1").strip() in {"1", "true", "yes"}:
         return True
     return failed and policy.keep_failed_artifacts
 

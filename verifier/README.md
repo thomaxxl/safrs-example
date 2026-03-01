@@ -31,6 +31,8 @@ Only contract tests:
 ../venv/bin/pytest -m contract
 ```
 
+This runs a strict default profile (`max_examples=25`, `phases=examples,fuzzing`), so expect longer runtime and possible real contract failures.
+
 Only parity tests:
 
 ```bash
@@ -40,7 +42,7 @@ Only parity tests:
 Increase Schemathesis coverage:
 
 ```bash
-SAFRS_CONTRACT_MAX_EXAMPLES=25 \
+SAFRS_CONTRACT_MAX_EXAMPLES=100 \
 SAFRS_CONTRACT_PHASES=examples,fuzzing \
 ../venv/bin/pytest -m contract
 ```
@@ -48,7 +50,7 @@ SAFRS_CONTRACT_PHASES=examples,fuzzing \
 Keep artifacts:
 
 ```bash
-SAFRS_VERIFY_KEEP_ARTIFACTS=1 ../venv/bin/pytest -m contract
+../venv/bin/pytest -m contract
 ```
 
 ## Run Verifier Directly (Flask/FastAPI)
@@ -77,18 +79,18 @@ verifier/.artifacts/<run_id>/
 
 They include runtime schema, patched schema, Schemathesis output, app logs, and run metadata.
 
-Default behavior: keep artifacts only on failure.  
-Set `SAFRS_VERIFY_KEEP_ARTIFACTS=1` to always keep them.
+Default behavior: keep artifacts for all runs (`SAFRS_VERIFY_KEEP_ARTIFACTS=1`).
+To only keep artifacts on failure, set `SAFRS_VERIFY_KEEP_ARTIFACTS=0`.
 
 ## Environment Variables
 
 Harness options:
 
-- `SAFRS_CONTRACT_MAX_EXAMPLES` (default `5`)
-- `SAFRS_CONTRACT_PHASES` (default `examples`)
+- `SAFRS_CONTRACT_MAX_EXAMPLES` (default `25`)
+- `SAFRS_CONTRACT_PHASES` (default `examples,fuzzing`)
 - `SAFRS_CONTRACT_REQUEST_TIMEOUT` (default `10`)
 - `SAFRS_VERIFY_APP_LOG_LINES` (default `200`)
-- `SAFRS_VERIFY_KEEP_ARTIFACTS` (default `0`)
+- `SAFRS_VERIFY_KEEP_ARTIFACTS` (default `1`)
 
 Demo app options (set by harness automatically):
 
