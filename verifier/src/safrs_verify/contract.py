@@ -36,6 +36,7 @@ class ContractRunOptions:
     tee_app_logs: bool = False
     force_base_path: str = ""
     suppress_health_check: str = "filter_too_much"
+    data_generation_mode: str = "positive"
     keep_failed_artifacts: bool = True
 
 
@@ -65,7 +66,25 @@ def options_from_env() -> ContractRunOptions:
         request_timeout_s=float(os.environ.get("SAFRS_CONTRACT_REQUEST_TIMEOUT", "10")),
         app_log_lines=int(os.environ.get("SAFRS_VERIFY_APP_LOG_LINES", "200")),
         suppress_health_check=os.environ.get("SAFRS_CONTRACT_SUPPRESS_HEALTH_CHECK", "filter_too_much"),
+        data_generation_mode=os.environ.get(
+            "SAFRS_CONTRACT_DATA_GENERATION_MODE",
+            os.environ.get("SAFRS_CONTRACT_DATA_GENERATION_METHOD", "positive"),
+        ),
     )
+
+
+def _build_status_stats(operation_statuses: dict[str, dict[str, int]]) -> dict[str, object]:
+    totals: dict[str, int] = {}
+    total_requests = 0
+    for status_counts in operation_statuses.values():
+        for status_code, count in status_counts.items():
+            total_requests += int(count)
+            totals[status_code] = totals.get(status_code, 0) + int(count)
+    return {
+        "total_requests": total_requests,
+        "status_totals": totals,
+        "operations": operation_statuses,
+    }
 
 
 def _write_metadata(
@@ -166,10 +185,12 @@ def run_contract_target(
             auth_header=auth_header,
             content_type=opts.content_type,
             suppress_health_check=opts.suppress_health_check,
+            data_generation_mode=opts.data_generation_mode,
         )
 
         write_text(artifacts.directory / "schemathesis.out.txt", st_result.output)
         write_text(artifacts.directory / "app.tail.txt", "\n".join(runner.log_tail()))
+        write_json(artifacts.directory / "stats.json", _build_status_stats(runner.status_histogram()))
         _write_metadata(
             artifacts,
             target=target,

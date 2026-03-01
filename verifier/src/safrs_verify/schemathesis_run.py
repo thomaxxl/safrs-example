@@ -38,6 +38,7 @@ def build_schemathesis_command(
     content_type: str = "application/vnd.api+json",
     checks: str = DEFAULT_CHECKS,
     suppress_health_check: str = "filter_too_much",
+    data_generation_mode: str = "positive",
 ) -> list[str]:
     executable = shutil.which("schemathesis")
     base_cmd = [executable] if executable else [sys.executable, "-m", "schemathesis"]
@@ -64,6 +65,8 @@ def build_schemathesis_command(
         command.extend(["--header", "Authorization: " + auth_header])
     if str(suppress_health_check).strip():
         command.extend(["--suppress-health-check", str(suppress_health_check).strip()])
+    if str(data_generation_mode).strip():
+        command.extend(["--mode", str(data_generation_mode).strip()])
     return command
 
 
@@ -78,6 +81,7 @@ def run_schemathesis(
     content_type: str = "application/vnd.api+json",
     checks: str = DEFAULT_CHECKS,
     suppress_health_check: str = "filter_too_much",
+    data_generation_mode: str = "positive",
 ) -> SchemathesisResult:
     command = build_schemathesis_command(
         spec_path=spec_path,
@@ -89,6 +93,7 @@ def run_schemathesis(
         content_type=content_type,
         checks=checks,
         suppress_health_check=suppress_health_check,
+        data_generation_mode=data_generation_mode,
     )
     proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
     return SchemathesisResult(returncode=proc.returncode, command=tuple(command), output=proc.stdout)

@@ -78,6 +78,7 @@ verifier/.artifacts/<run_id>/
 ```
 
 They include runtime schema, patched schema, Schemathesis output, app logs, and run metadata.
+They also include `stats.json` with per-operation status-code histograms.
 
 Default behavior: keep artifacts for all runs (`SAFRS_VERIFY_KEEP_ARTIFACTS=1`).
 To only keep artifacts on failure, set `SAFRS_VERIFY_KEEP_ARTIFACTS=0`.
@@ -90,6 +91,7 @@ Harness options:
 - `SAFRS_CONTRACT_PHASES` (default `examples,fuzzing`)
 - `SAFRS_CONTRACT_REQUEST_TIMEOUT` (default `10`)
 - `SAFRS_CONTRACT_SUPPRESS_HEALTH_CHECK` (default `filter_too_much`)
+- `SAFRS_CONTRACT_DATA_GENERATION_MODE` (default `positive`)
 - `SAFRS_VERIFY_APP_LOG_LINES` (default `200`)
 - `SAFRS_VERIFY_KEEP_ARTIFACTS` (default `1`)
 

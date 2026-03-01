@@ -598,6 +598,8 @@ def _synthetic_relationship_body_from_seed(
 
         return {
             "type": "object",
+            "required": ["data"],
+            "additionalProperties": False,
             "properties": {
                 "data": {
                     "type": "array",
@@ -623,6 +625,8 @@ def _synthetic_relationship_body_from_seed(
             )
         return {
             "type": "object",
+            "required": ["data"],
+            "additionalProperties": False,
             "properties": {
                 "data": {
                     "type": "object",
@@ -700,6 +704,48 @@ def _validate_relationship_seed(
     return items
 
 
+def _ensure_required_member(schema: dict[str, Any], member: str) -> None:
+    required = schema.get("required")
+    if isinstance(required, list):
+        if member not in required:
+            required.append(member)
+        return
+    schema["required"] = [member]
+
+
+def _identifier_overlay_schema(id_values: list[Any], type_values: list[str], id_type: str = "string") -> dict[str, Any]:
+    id_schema: dict[str, Any] = {"type": id_type if id_type else "string"}
+    if id_values:
+        id_schema["enum"] = id_values
+        id_schema["default"] = id_values[0]
+    type_schema: dict[str, Any] = {"type": "string"}
+    if type_values:
+        type_schema["enum"] = type_values
+        type_schema["default"] = type_values[0]
+    return {
+        "type": "object",
+        "required": ["id", "type"],
+        "properties": {
+            "id": id_schema,
+            "type": type_schema,
+        },
+    }
+
+
+def _wrap_ref_with_overlay(schema: dict[str, Any], overlay_schema: dict[str, Any]) -> bool:
+    ref_value = schema.get("$ref")
+    if not isinstance(ref_value, str) or not ref_value:
+        return False
+    existing = {key: value for key, value in schema.items() if key != "$ref"}
+    all_of: list[dict[str, Any]] = [{"$ref": ref_value}]
+    if existing:
+        all_of.append(existing)
+    all_of.append(overlay_schema)
+    schema.clear()
+    schema["allOf"] = all_of
+    return True
+
+
 def _apply_relationship_seed_to_schema(data_schema: dict[str, Any], items: list[dict[str, Any]]) -> None:
     ids = [str(item.get("id")) for item in items]
     types: list[str] = []
@@ -714,6 +760,8 @@ def _apply_relationship_seed_to_schema(data_schema: dict[str, Any], items: list[
         data_schema["maxItems"] = len(items)
         items_schema = data_schema.setdefault("items", {})
         if not isinstance(items_schema, dict):
+            return
+        if _wrap_ref_with_overlay(items_schema, _identifier_overlay_schema(ids, types)):
             return
         properties = items_schema.setdefault("properties", {})
         if not isinstance(properties, dict):
@@ -730,6 +778,8 @@ def _apply_relationship_seed_to_schema(data_schema: dict[str, Any], items: list[
             type_schema["default"] = types[0]
         return
 
+    if _wrap_ref_with_overlay(data_schema, _identifier_overlay_schema(ids, types)):
+        return
     properties = data_schema.setdefault("properties", {})
     if not isinstance(properties, dict):
         return
@@ -1025,6 +1075,9 @@ def _patch_spec_with_seed(spec: dict[str, Any], seed: dict[str, Any]) -> dict[st
                 raise RuntimeError(
                     f"Invalid relationship schema for {method_lc.upper()} {path}: expected JSON:API relationship document"
                 )
+            if isinstance(resolved_relationship_body, dict):
+                _ensure_required_member(resolved_relationship_body, "data")
+                resolved_relationship_body.setdefault("additionalProperties", False)
 
             items = _validate_relationship_seed(rel_doc, data_schema, seed_key, path, method_lc)
             _apply_relationship_seed_to_schema(data_schema, items)

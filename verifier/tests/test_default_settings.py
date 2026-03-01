@@ -9,6 +9,8 @@ def test_default_contract_options_match_expected(monkeypatch) -> None:
     monkeypatch.delenv("SAFRS_CONTRACT_PHASES", raising=False)
     monkeypatch.delenv("SAFRS_CONTRACT_REQUEST_TIMEOUT", raising=False)
     monkeypatch.delenv("SAFRS_CONTRACT_SUPPRESS_HEALTH_CHECK", raising=False)
+    monkeypatch.delenv("SAFRS_CONTRACT_DATA_GENERATION_MODE", raising=False)
+    monkeypatch.delenv("SAFRS_CONTRACT_DATA_GENERATION_METHOD", raising=False)
     monkeypatch.delenv("SAFRS_VERIFY_APP_LOG_LINES", raising=False)
 
     opts = options_from_env()
@@ -16,6 +18,7 @@ def test_default_contract_options_match_expected(monkeypatch) -> None:
     assert opts.phases == "examples,fuzzing"
     assert opts.request_timeout_s == 10.0
     assert opts.suppress_health_check == "filter_too_much"
+    assert opts.data_generation_mode == "positive"
     assert opts.app_log_lines == 200
 
 

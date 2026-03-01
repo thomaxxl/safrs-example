@@ -281,8 +281,75 @@ def test_patch_spec_with_seed_replaces_unresolvable_relationship_ref_with_seed_s
 
     body_schema = operation["requestBody"]["content"]["application/vnd.api+json"]["schema"]
     assert "$ref" not in body_schema
+    assert "data" in body_schema["required"]
+    assert body_schema["additionalProperties"] is False
     assert body_schema["properties"]["data"]["type"] == "array"
     assert body_schema["properties"]["data"]["items"]["properties"]["id"]["enum"] == ["book-1"]
+
+
+def test_patch_spec_with_seed_relationship_ref_items_use_allof_overlay_and_require_data() -> None:
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/api/People/{object_id}/friends": {
+                "patch": {
+                    "description": "Update the Person friends relationship",
+                    "parameters": [
+                        {"name": "object_id", "in": "path", "required": True, "schema": {"type": "string"}}
+                    ],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/vnd.api+json": {
+                                "schema": {"$ref": "#/components/schemas/PersonRelationshipDocumentToMany"}
+                            }
+                        },
+                    },
+                    "responses": {"204": {"description": "No Content"}},
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "PersonRelationshipDocumentToMany": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/PersonResourceIdentifier"},
+                        }
+                    },
+                },
+                "PersonResourceIdentifier": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "id": {"type": "string"},
+                    },
+                },
+            }
+        },
+    }
+
+    seed = {
+        "PersonId": "1",
+        "FriendId": "2",
+        "relationship_path_params": {"People.friends": {"PersonId": "1"}},
+        "relationships": {"People.friends": {"data": [{"type": "Person", "id": "2"}]}},
+    }
+
+    patched = patch_spec_with_seed(spec, seed)
+    body_schema = patched["components"]["schemas"]["PersonRelationshipDocumentToMany"]
+    assert "data" in body_schema["required"]
+    assert body_schema["additionalProperties"] is False
+
+    items_schema = body_schema["properties"]["data"]["items"]
+    assert "allOf" in items_schema
+    assert items_schema["allOf"][0]["$ref"] == "#/components/schemas/PersonResourceIdentifier"
+    overlay = items_schema["allOf"][-1]
+    assert overlay["required"] == ["id", "type"]
+    assert overlay["properties"]["id"]["enum"] == ["2"]
+    assert overlay["properties"]["type"]["enum"] == ["Person"]
 
 
 def test_patch_spec_with_seed_skips_unseeded_relationship_operations() -> None:

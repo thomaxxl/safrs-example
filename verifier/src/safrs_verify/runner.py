@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -14,6 +15,9 @@ from pathlib import Path
 
 class RunnerError(RuntimeError):
     pass
+
+
+_HTTP_LOG_PATTERN = re.compile(r'"([A-Z]+)\s+(\S+)\s+HTTP/[0-9.]+"\s+(\d{3})')
 
 
 def find_free_port(host: str) -> int:
@@ -64,6 +68,7 @@ def start_app_log_drain(
     ring: deque[str],
     tee: bool,
     log_fp: object | None,
+    status_hist: dict[str, dict[str, int]] | None = None,
 ) -> threading.Thread:
     def _reader() -> None:
         if proc.stdout is None:
@@ -72,6 +77,7 @@ def start_app_log_drain(
             for raw in proc.stdout:
                 line = raw.rstrip("\n")
                 ring.append(line)
+                _record_http_status(line, status_hist)
                 if log_fp is not None:
                     try:
                         log_fp.write(raw)
@@ -95,6 +101,18 @@ def start_app_log_drain(
     return thread
 
 
+def _record_http_status(line: str, status_hist: dict[str, dict[str, int]] | None) -> None:
+    if status_hist is None:
+        return
+    match = _HTTP_LOG_PATTERN.search(str(line))
+    if match is None:
+        return
+    method, path, status = match.groups()
+    operation_key = f"{method} {path}"
+    status_counts = status_hist.setdefault(operation_key, {})
+    status_counts[status] = status_counts.get(status, 0) + 1
+
+
 @dataclass
 class AppRunner:
     app_path: Path
@@ -114,6 +132,7 @@ class AppRunner:
     _ring: deque[str] | None = None
     _thread: threading.Thread | None = None
     _log_fp: object | None = None
+    _status_hist: dict[str, dict[str, int]] | None = None
 
     def start(self) -> str:
         if self.process is not None:
@@ -132,6 +151,7 @@ class AppRunner:
         cmd = [sys.executable, str(self.app_path), self.host, str(resolved_port), *self.app_args]
 
         self._ring = deque(maxlen=max(1, int(self.app_log_lines)))
+        self._status_hist = {}
         if self.app_log_file is not None:
             self._log_fp = open(self.app_log_file, "w", encoding="utf-8", errors="replace")
 
@@ -147,7 +167,13 @@ class AppRunner:
             cwd=str(self.app_path.parent),
         )
 
-        self._thread = start_app_log_drain(self.process, self._ring, self.tee_app_logs, self._log_fp)
+        self._thread = start_app_log_drain(
+            self.process,
+            self._ring,
+            self.tee_app_logs,
+            self._log_fp,
+            self._status_hist,
+        )
         wait_http_ok(self.base_url.rstrip("/") + self.health_path, self.startup_timeout)
         self.port = resolved_port
         return self.base_url
@@ -177,6 +203,14 @@ class AppRunner:
         if self._ring is None:
             return []
         return list(self._ring)
+
+    def status_histogram(self) -> dict[str, dict[str, int]]:
+        if self._status_hist is None:
+            return {}
+        return {
+            operation: dict(status_counts)
+            for operation, status_counts in self._status_hist.items()
+        }
 
     def __enter__(self) -> AppRunner:
         self.start()
