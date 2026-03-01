@@ -4,13 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from safrs_verify.config import default_contract_targets
+from safrs_verify.config import ContractTarget, default_contract_targets
 from safrs_verify.contract import ContractRunOptions, options_from_env, run_contract_target
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONTRACT_TARGETS: tuple[ContractTarget, ...] = default_contract_targets(PROJECT_ROOT)
 
 
 @pytest.mark.contract
 @pytest.mark.slow
-def test_contract_targets_run_with_runtime_spec_discovery() -> None:
+@pytest.mark.parametrize("target", CONTRACT_TARGETS, ids=lambda t: t.name)
+def test_contract_target_runs_with_runtime_spec_discovery(target: ContractTarget) -> None:
     options_env = options_from_env()
     options = ContractRunOptions(
         startup_timeout_s=20.0,
@@ -21,24 +26,20 @@ def test_contract_targets_run_with_runtime_spec_discovery() -> None:
         keep_failed_artifacts=True,
     )
 
-    failures: list[str] = []
-    for target in default_contract_targets(Path(__file__).resolve().parents[1]):
-        result = run_contract_target(target, options=options)
+    result = run_contract_target(target, options=options)
+    assert result.returncode == 0, "\n".join(
+        [
+            f"target={target.name}",
+            f"spec_endpoint={result.spec_endpoint}",
+            f"base_url={result.base_url}",
+            f"effective_url={result.effective_url}",
+            f"artifact_dir={result.artifact_dir}",
+            "command=" + " ".join(result.command),
+            "app_tail:\n" + "\n".join(result.app_log_tail),
+            "schemathesis:\n" + result.schemathesis_output[-8000:],
+        ]
+    )
 
-        if result.returncode != 0:
-            failures.append(
-                "\n".join(
-                    [
-                        f"target={target.name}",
-                        f"spec_endpoint={result.spec_endpoint}",
-                        f"base_url={result.base_url}",
-                        f"effective_url={result.effective_url}",
-                        f"artifact_dir={result.artifact_dir}",
-                        "command=" + " ".join(result.command),
-                        "app_tail:\n" + "\n".join(result.app_log_tail),
-                        "schemathesis:\n" + result.schemathesis_output[-8000:],
-                    ]
-                )
-            )
 
-    assert failures == [], "\n\n".join(failures)
+def test_contract_target_list_is_expected() -> None:
+    assert {target.name for target in CONTRACT_TARGETS} == {"flask", "fastapi"}
