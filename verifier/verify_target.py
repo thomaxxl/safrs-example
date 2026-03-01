@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Mapping
 
 
 HERE = Path(__file__).resolve().parent
@@ -16,7 +17,13 @@ from safrs_verify.config import ContractTarget
 from safrs_verify.contract import ContractRunOptions, options_from_env, run_contract_target
 
 
-def run_target(target_name: str, app_name: str) -> int:
+def run_target(
+    target_name: str,
+    app_name: str,
+    *,
+    target_env: Mapping[str, str] | None = None,
+    collection_id_keys: Mapping[str, str] | None = None,
+) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=0)
@@ -48,7 +55,8 @@ def run_target(target_name: str, app_name: str) -> int:
         spec_candidates=("/openapi.json", "/api/swagger.json"),
         health_path="/health",
         seed_path="/seed",
-        env={"SAFRS_EXAMPLE_RESET_DB": "1"},
+        env=dict(target_env or {"SAFRS_EXAMPLE_RESET_DB": "1"}),
+        collection_id_keys=dict(collection_id_keys or {}),
     )
 
     result = run_contract_target(target, options=options)

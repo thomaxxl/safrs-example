@@ -42,4 +42,4 @@ def test_contract_target_runs_with_runtime_spec_discovery(target: ContractTarget
 
 
 def test_contract_target_list_is_expected() -> None:
-    assert {target.name for target in CONTRACT_TARGETS} == {"flask", "fastapi"}
+    assert {target.name for target in CONTRACT_TARGETS} == {"flask", "fastapi", "nw-flask", "nw-fastapi"}

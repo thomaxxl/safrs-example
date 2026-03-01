@@ -33,6 +33,13 @@ Only contract tests:
 
 This runs a strict default profile (`max_examples=25`, `phases=examples,fuzzing`), so expect longer runtime and possible real contract failures.
 
+Select specific contract targets:
+
+```bash
+SAFRS_CONTRACT_TARGETS=flask,fastapi ../venv/bin/pytest -m contract
+SAFRS_CONTRACT_TARGETS=nw-flask,nw-fastapi ../venv/bin/pytest -m contract
+```
+
 Only parity tests:
 
 ```bash
@@ -60,6 +67,8 @@ From inside `verifier/`:
 ```bash
 ../venv/bin/python verify_flask.py
 ../venv/bin/python verify_fastapi.py
+../venv/bin/python verify_nw_flask.py
+../venv/bin/python verify_nw_fastapi.py
 ```
 
 These commands:
@@ -94,6 +103,7 @@ Harness options:
 - `SAFRS_CONTRACT_DATA_GENERATION_MODE` (default `positive`)
 - `SAFRS_VERIFY_APP_LOG_LINES` (default `200`)
 - `SAFRS_VERIFY_KEEP_ARTIFACTS` (default `1`)
+- `SAFRS_CONTRACT_TARGETS` (default all: `flask,fastapi,nw-flask,nw-fastapi`)
 
 Demo app options (set by harness automatically):
 
@@ -101,6 +111,12 @@ Demo app options (set by harness automatically):
 - `SAFRS_EXAMPLE_RESET_DB` (default `1`)
 - `DEBUG=1` (always forced by verifier runner)
 - `FLASK_DEBUG=1` (always forced by verifier runner)
+
+NW app options:
+
+- `SAFRS_NW_DB_SOURCE` (default `nw-db.sqlite`)
+- `SAFRS_NW_DB_PATH` (working copy path; default `apps/nw_<framework>_<port>.sqlite`)
+- `SAFRS_NW_RESET_DB` (default `1`, copies source DB into working DB each run)
 
 ## Troubleshooting
 
