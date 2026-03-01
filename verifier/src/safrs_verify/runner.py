@@ -125,6 +125,9 @@ class AppRunner:
         env.setdefault("PYTHONUNBUFFERED", "1")
         if self.env:
             env.update(self.env)
+        # Always run verifier app subprocesses in debug mode for easier diagnosis.
+        env["DEBUG"] = "1"
+        env["FLASK_DEBUG"] = "1"
 
         cmd = [sys.executable, str(self.app_path), self.host, str(resolved_port), *self.app_args]
 

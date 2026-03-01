@@ -8,3 +8,5 @@ __pycache__/
 openapi.json
 swagger.json
 verify.log
+
+mail.txt

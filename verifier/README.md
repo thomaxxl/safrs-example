@@ -96,6 +96,8 @@ Demo app options (set by harness automatically):
 
 - `SAFRS_EXAMPLE_DB_PATH` (SQLite path per run)
 - `SAFRS_EXAMPLE_RESET_DB` (default `1`)
+- `DEBUG=1` (always forced by verifier runner)
+- `FLASK_DEBUG=1` (always forced by verifier runner)
 
 ## Troubleshooting
 
