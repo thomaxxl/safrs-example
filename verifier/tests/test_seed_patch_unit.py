@@ -275,8 +275,9 @@ def test_patch_spec_with_seed_replaces_unresolvable_relationship_ref_with_seed_s
     patched = patch_spec_with_seed(spec, seed)
     operation = patched["paths"]["/api/People/{object_id}/books_read"]["patch"]
     path_param = operation["parameters"][0]
-    assert path_param["enum"] == ["1"]
-    assert path_param["default"] == "1"
+    assert path_param["schema"]["enum"] == ["1"]
+    assert path_param["schema"]["default"] == "1"
+    assert "enum" not in path_param
 
     body_schema = operation["requestBody"]["content"]["application/vnd.api+json"]["schema"]
     assert "$ref" not in body_schema
@@ -320,7 +321,9 @@ def test_patch_spec_with_seed_skips_unseeded_relationship_operations() -> None:
 
     patched = patch_spec_with_seed(spec, seed)
     path_param = patched["paths"]["/api/People/{object_id}/employer"]["patch"]["parameters"][0]
-    assert path_param["enum"] == ["1"]
+    assert path_param["schema"]["enum"] == ["1"]
+    assert path_param["schema"]["default"] == "1"
+    assert "enum" not in path_param
 
 
 def test_patch_spec_with_seed_adds_openapi_component_aliases_for_missing_refs() -> None:

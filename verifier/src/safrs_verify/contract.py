@@ -35,6 +35,7 @@ class ContractRunOptions:
     app_log_lines: int = 200
     tee_app_logs: bool = False
     force_base_path: str = ""
+    suppress_health_check: str = "filter_too_much"
     keep_failed_artifacts: bool = True
 
 
@@ -63,6 +64,7 @@ def options_from_env() -> ContractRunOptions:
         phases=os.environ.get("SAFRS_CONTRACT_PHASES", "examples,fuzzing"),
         request_timeout_s=float(os.environ.get("SAFRS_CONTRACT_REQUEST_TIMEOUT", "10")),
         app_log_lines=int(os.environ.get("SAFRS_VERIFY_APP_LOG_LINES", "200")),
+        suppress_health_check=os.environ.get("SAFRS_CONTRACT_SUPPRESS_HEALTH_CHECK", "filter_too_much"),
     )
 
 
@@ -163,6 +165,7 @@ def run_contract_target(
             phases=opts.phases,
             auth_header=auth_header,
             content_type=opts.content_type,
+            suppress_health_check=opts.suppress_health_check,
         )
 
         write_text(artifacts.directory / "schemathesis.out.txt", st_result.output)

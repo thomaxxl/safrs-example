@@ -7,7 +7,7 @@ import datetime
 import hashlib
 import uuid
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from safrs import SAFRSBase, jsonapi_attr, jsonapi_rpc
 from safrs.api_methods import search, startswith
@@ -114,13 +114,16 @@ class Person(BaseModel):
         return {"output": f"sent {content}"}
 
     @classmethod
-    @jsonapi_rpc(http_methods=["GET", "POST"])
+    @jsonapi_rpc(http_methods=["POST"])
     def my_rpc(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        o1 = cls.query.first()
-        o2 = cls.query.first()
+        pair = cls.query.order_by(cls.id.asc()).limit(2).all()
         data: list[Any] = []
-        if o1 is not None and o2 is not None:
-            o1.friends.append(o2)
+        if len(pair) == 2:
+            o1, o2 = pair
+            if o1.id != o2.id:
+                friend_ids = {str(friend.id) for friend in _relationship_items(o1.friends)}
+                if str(o2.id) not in friend_ids:
+                    o1.friends.append(o2)
             data = [o1, o2]
         return {"data": data, "meta": {"args": args, "kwargs": kwargs}}
 
@@ -166,7 +169,11 @@ class Review(BaseModel):
 EXPOSED_MODELS = [Person, Book, Review, Publisher]
 
 
-def create_session(db_path: Path | None = None, database_url: str | None = None) -> Any:
+def create_session(
+    db_path: Path | None = None,
+    database_url: str | None = None,
+    scopefunc: Callable[[], Any] | None = None,
+) -> Any:
     if database_url:
         engine = create_engine(str(database_url), future=True)
     else:
@@ -174,7 +181,10 @@ def create_session(db_path: Path | None = None, database_url: str | None = None)
             raise ValueError("db_path is required when database_url is not provided")
         engine = create_engine(f"sqlite:///{db_path}", future=True)
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-    Session = scoped_session(session_factory)
+    if scopefunc is not None:
+        Session = scoped_session(session_factory, scopefunc=scopefunc)
+    else:
+        Session = scoped_session(session_factory)
     Base.metadata.create_all(engine)
     return Session
 

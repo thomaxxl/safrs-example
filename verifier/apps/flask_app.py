@@ -8,6 +8,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_SAFRS_PATH = REPO_ROOT / "safrs"
+if str(LOCAL_SAFRS_PATH) not in sys.path:
+    sys.path.insert(0, str(LOCAL_SAFRS_PATH))
+
 import safrs
 from flask import Flask, jsonify, redirect
 from flask_cors import CORS

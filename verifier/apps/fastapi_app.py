@@ -3,10 +3,17 @@
 
 from __future__ import annotations
 
+import contextvars
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_SAFRS_PATH = REPO_ROOT / "safrs"
+if str(LOCAL_SAFRS_PATH) not in sys.path:
+    sys.path.insert(0, str(LOCAL_SAFRS_PATH))
 
 import safrs
 from fastapi import FastAPI
@@ -26,6 +33,7 @@ from models import (
 
 
 HERE = Path(__file__).resolve().parent
+REQUEST_SCOPE: contextvars.ContextVar[str] = contextvars.ContextVar("safrs_request_scope", default="startup")
 
 
 def _should_reset_db() -> bool:
@@ -49,10 +57,11 @@ def create_app(port: int = 8000) -> FastAPI:
     if _should_reset_db() and db_path.exists():
         db_path.unlink()
 
-    session = create_session(db_path=db_path)
+    session = create_session(db_path=db_path, scopefunc=lambda: REQUEST_SCOPE.get())
     wrapper = SAFRSDBWrapper(session, Base)
     setattr(safrs, "DB", wrapper)
     seed_data(session)
+    session.remove()
 
     app = FastAPI(
         title="SAFRS verifier FastAPI demo",
@@ -63,10 +72,18 @@ def create_app(port: int = 8000) -> FastAPI:
 
     @app.middleware("http")
     async def remove_session_middleware(request: Any, call_next: Any) -> Any:
+        scope_token = REQUEST_SCOPE.set(uuid.uuid4().hex)
         try:
             return await call_next(request)
         finally:
-            session.remove()
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            try:
+                session.remove()
+            finally:
+                REQUEST_SCOPE.reset(scope_token)
 
     api = SafrsFastAPI(app, prefix=API_PREFIX)
     app.state.safrs_api = api

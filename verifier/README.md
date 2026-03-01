@@ -89,6 +89,7 @@ Harness options:
 - `SAFRS_CONTRACT_MAX_EXAMPLES` (default `25`)
 - `SAFRS_CONTRACT_PHASES` (default `examples,fuzzing`)
 - `SAFRS_CONTRACT_REQUEST_TIMEOUT` (default `10`)
+- `SAFRS_CONTRACT_SUPPRESS_HEALTH_CHECK` (default `filter_too_much`)
 - `SAFRS_VERIFY_APP_LOG_LINES` (default `200`)
 - `SAFRS_VERIFY_KEEP_ARTIFACTS` (default `1`)
 

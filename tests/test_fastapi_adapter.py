@@ -11,7 +11,7 @@ import safrs
 from safrs.api_methods import duplicate
 from safrs import SAFRSBase
 from safrs import tx
-from safrs.errors import JsonapiError, SystemValidationError, ValidationError
+from safrs.errors import GenericError, JsonapiError, SystemValidationError, ValidationError
 from safrs.swagger_doc import jsonapi_rpc
 from sqlalchemy import DECIMAL, Column, ForeignKey, Integer, String, create_engine
 from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, StatementError
@@ -977,6 +977,24 @@ def test_fastapi_request_validation_error_returns_jsonapi_error_document(fastapi
     assert payload["errors"][0]["status"] == "422"
 
 
+def test_fastapi_unhandled_runtime_exception_returns_jsonapi_error_document() -> None:
+    app = FastAPI()
+    install_jsonapi_exception_handlers(app)
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise RuntimeError("boom")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/boom")
+
+    assert response.status_code == 500
+    assert JSONAPI_MEDIA_TYPE in response.headers.get("content-type", "")
+    payload = response.json()
+    assert payload["errors"][0]["status"] == "500"
+    assert payload["errors"][0]["detail"] == "Internal Server Error"
+
+
 def test_fastapi_validation_error_pointer_and_parameter_mapping() -> None:
     class _Attrs(BaseModel):
         name: int
@@ -1235,8 +1253,10 @@ def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> 
         api._handle_safrs_exception(SystemValidationError("server side validation"))
     assert system_exc.value.status_code == 400
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as runtime_exc:
         api._handle_safrs_exception(RuntimeError("boom"))
+    assert runtime_exc.value.status_code == 500
+    assert runtime_exc.value.payload["errors"][0]["detail"] == "Internal Server Error"
 
     class ModelValidation:
         @staticmethod
@@ -1259,8 +1279,9 @@ def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> 
         def filter(_raw: str) -> Any:
             raise RuntimeError("broken")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as model_runtime_exc:
         api._apply_filter(ModelRuntime, _request("filter=x"), [])
+    assert model_runtime_exc.value.status_code == 500
 
     class ModelSFilter:
         @staticmethod
@@ -1357,6 +1378,12 @@ def test_fastapi_maps_sqlalchemy_errors_to_jsonapi_errors_with_rollback(fastapi_
     assert rollback_calls["count"] == len(cases)
 
 
+def test_generic_error_debug_mode_works_without_flask_request_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("safrs.errors.is_debug", lambda: True)
+    err = GenericError("boom")
+    assert "boom" in err.message
+
+
 def test_fastapi_build_post_response_sets_prefixed_quoted_location_header() -> None:
     api = SafrsFastAPI(FastAPI(), prefix="/api")
 
@@ -1378,6 +1405,15 @@ def test_fastapi_rpc_request_context_parses_query_string() -> None:
 
         assert flask_request.args.get("fields[FastBook]") == ""
         assert flask_request.args.get("page[offset]") == "1"
+
+
+def test_fastapi_rpc_request_context_supports_multi_value_query_params() -> None:
+    request = _request("x=1&x=2&limit=3")
+    with SafrsFastAPI._rpc_request_context(request):
+        from flask import request as flask_request
+
+        assert flask_request.args.getlist("x") == ["1", "2"]
+        assert flask_request.args.get("limit") == "3"
 
 
 def test_fastapi_remove_relationship_item_missing_member_is_noop(fastapi_client: TestClient) -> None:
@@ -1465,6 +1501,9 @@ def test_fastapi_rpc_and_encoding_internal_branches(fastapi_client: TestClient) 
     assert parsed_args["x"] == "meta"
     assert parsed_args["y"] == "2"
 
+    parsed_null_payload_args = api._parse_rpc_args(_request("only=query"), None)
+    assert parsed_null_payload_args == {"only": "query"}
+
     assert api._encode_rpc_value(None) is None
     assert api._encode_rpc_value({"type": "FastThing", "id": "1"}) == {"type": "FastThing", "id": "1"}
     assert api._encode_rpc_value({"outer": {"inner": 1}}) == {"outer": {"inner": 1}}
@@ -1516,16 +1555,18 @@ def test_fastapi_rpc_handler_exception_branches(fastapi_client: TestClient) -> N
         class_handler_jsonapi(_request(""), None)
 
     class_handler_runtime = api._rpc_handler(ClassRPCModel, "raise_runtime", True)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as class_runtime_exc:
         class_handler_runtime(_request(""), None)
+    assert class_runtime_exc.value.status_code == 500
 
     instance_handler_jsonapi = api._rpc_handler(InstanceRPCModel, "raise_jsonapi", False)
     with pytest.raises(JSONAPIHTTPError):
         instance_handler_jsonapi("1", _request(""), None)
 
     instance_handler_runtime = api._rpc_handler(InstanceRPCModel, "raise_runtime", False)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as instance_runtime_exc:
         instance_handler_runtime("1", _request(""), None)
+    assert instance_runtime_exc.value.status_code == 500
 
 
 def test_fastapi_internal_parse_and_instance_error_branches(monkeypatch: pytest.MonkeyPatch, fastapi_client: TestClient) -> None:
@@ -1565,8 +1606,9 @@ def test_fastapi_internal_parse_and_instance_error_branches(monkeypatch: pytest.
         def get_instance(_object_id: str) -> Any:
             raise RuntimeError("broken get_instance")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as broken_instance_exc:
         api._get_instance(BrokenModel)("1", _request(""))
+    assert broken_instance_exc.value.status_code == 500
 
 
 def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_client: TestClient) -> None:
@@ -1596,11 +1638,12 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         def _s_post(cls, **_kwargs: Any) -> Any:
             raise RuntimeError("post boom")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as post_runtime_exc:
         api._post_collection(BrokenPostModel)(
             _request(""),
             {"data": {"type": "PostDummyModel", "attributes": {"name": "x"}}},
         )
+    assert post_runtime_exc.value.status_code == 500
 
     class BrokenPatchModel:
         _s_type = "BrokenPatchModel"
@@ -1610,12 +1653,13 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         def get_instance(_object_id: str) -> Any:
             raise RuntimeError("patch boom")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as patch_runtime_exc:
         api._patch_instance(BrokenPatchModel)(
             "1",
             _request(""),
             {"data": {"type": "BrokenPatchModel", "attributes": {"name": "x"}}},
         )
+    assert patch_runtime_exc.value.status_code == 500
 
     class DeleteOKModel:
         @staticmethod
@@ -1630,8 +1674,9 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         def get_instance(_object_id: str) -> Any:
             raise RuntimeError("delete boom")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as delete_runtime_exc:
         api._delete_instance(DeleteBrokenModel)("1")
+    assert delete_runtime_exc.value.status_code == 500
 
     class DeleteJSONAPIModel:
         @staticmethod

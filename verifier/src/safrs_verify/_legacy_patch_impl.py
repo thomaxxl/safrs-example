@@ -838,6 +838,22 @@ def _translate_relationship_parent_param(
     return {"object_id": relationship_path_params[canonical_key]}
 
 
+def _set_seeded_path_parameter_value(parameter: dict[str, Any], value: Any, spec_major: int) -> None:
+    if spec_major == 3:
+        schema = parameter.setdefault("schema", {})
+        if not isinstance(schema, dict):
+            schema = {}
+            parameter["schema"] = schema
+        schema["enum"] = [value]
+        schema["default"] = value
+        parameter.pop("enum", None)
+        parameter.pop("default", None)
+        return
+
+    parameter["enum"] = [value]
+    parameter["default"] = value
+
+
 def _patch_spec_with_seed(spec: dict[str, Any], seed: dict[str, Any]) -> dict[str, Any]:
     patched = json.loads(json.dumps(spec))
     major = _spec_major(patched)
@@ -869,8 +885,7 @@ def _patch_spec_with_seed(spec: dict[str, Any], seed: dict[str, Any]) -> dict[st
                 name = str(parameter.get("name", ""))
                 if name in seed:
                     value = seed[name]
-                    parameter["enum"] = [value]
-                    parameter.setdefault("default", value)
+                    _set_seeded_path_parameter_value(parameter, value, major)
                     continue
                 if name == "object_id":
                     seed_id_key = _seed_key_for_collection(collection or "")
@@ -880,8 +895,7 @@ def _patch_spec_with_seed(spec: dict[str, Any], seed: dict[str, Any]) -> dict[st
                             % (collection, seed_id_key, path)
                         )
                     value = seed[seed_id_key]
-                    parameter["enum"] = [value]
-                    parameter.setdefault("default", value)
+                    _set_seeded_path_parameter_value(parameter, value, major)
 
             body_schema = _operation_body_schema(operation, major)
             resolved_body_schema: Optional[dict[str, Any]] = None
@@ -957,8 +971,7 @@ def _patch_spec_with_seed(spec: dict[str, Any], seed: dict[str, Any]) -> dict[st
                     continue
                 seen_path_param_names.add(name)
                 value = relationship_path_params[name]
-                parameter["enum"] = [value]
-                parameter["default"] = value
+                _set_seeded_path_parameter_value(parameter, value, major)
             missing_path_params = sorted(set(relationship_path_params.keys()) - seen_path_param_names)
             if missing_path_params:
                 raise RuntimeError(
