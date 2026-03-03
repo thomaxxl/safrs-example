@@ -60,6 +60,13 @@ SAFRS_PARITY_REQUESTS='/api/Order?page[offset]=0&page[limit]=1&include=Customer,
 ../venv/bin/pytest -q tests/test_response_parity.py
 ```
 
+For multiple requests, use JSON-array format (recommended):
+
+```bash
+SAFRS_PARITY_REQUESTS='["/api/Order?page[offset]=0&page[limit]=1&include=Customer,Employee","/api/Customer?page[offset]=0&page[limit]=1"]' \
+../venv/bin/pytest -q tests/test_response_parity.py
+```
+
 Increase Schemathesis coverage:
 
 ```bash

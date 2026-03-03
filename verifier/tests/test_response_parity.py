@@ -30,6 +30,39 @@ class _PairCase:
     requests: tuple[str, ...]
 
 
+def _parse_request_paths(raw: str) -> tuple[str, ...]:
+    value = str(raw or "").strip()
+    if not value:
+        return ()
+
+    # Preferred: JSON array for multiple requests.
+    if value.startswith("["):
+        parsed = json.loads(value)
+        if not isinstance(parsed, list):
+            raise AssertionError("SAFRS_PARITY_REQUESTS JSON value must be a list of request paths")
+        result = tuple(str(item).strip() for item in parsed if str(item).strip())
+        if not result:
+            raise AssertionError("SAFRS_PARITY_REQUESTS parsed to an empty request list")
+        return result
+
+    # Also support newline-separated requests.
+    if "\n" in value:
+        result = tuple(part.strip() for part in value.splitlines() if part.strip())
+        if not result:
+            raise AssertionError("SAFRS_PARITY_REQUESTS parsed to an empty request list")
+        return result
+
+    # Legacy alternate separator for multiple requests.
+    if "||" in value:
+        result = tuple(part.strip() for part in value.split("||") if part.strip())
+        if not result:
+            raise AssertionError("SAFRS_PARITY_REQUESTS parsed to an empty request list")
+        return result
+
+    # Default: single request string (commas are valid inside query parameters).
+    return (value,)
+
+
 def _normalize_unordered(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _normalize_unordered(item) for key, item in sorted(value.items(), key=lambda kv: str(kv[0]))}
@@ -73,7 +106,7 @@ def _resolve_pair_case() -> _PairCase:
 
     request_csv = os.environ.get("SAFRS_PARITY_REQUESTS", "").strip()
     if request_csv:
-        request_paths = tuple(path.strip() for path in request_csv.split(",") if path.strip())
+        request_paths = _parse_request_paths(request_csv)
     else:
         request_paths = DEFAULT_PARITY_REQUESTS
 
@@ -86,7 +119,10 @@ def _resolve_pair_case() -> _PairCase:
 
 
 def _get_json(base_url: str, path_and_query: str) -> tuple[int, Any, str]:
-    response = requests.get(base_url.rstrip("/") + path_and_query, timeout=20)
+    request_path = str(path_and_query).strip()
+    if not request_path.startswith("/"):
+        request_path = "/" + request_path
+    response = requests.get(base_url.rstrip("/") + request_path, timeout=20)
     content_type = response.headers.get("content-type", "")
     if "application/json" not in content_type and "application/vnd.api+json" not in content_type:
         return response.status_code, response.text, content_type
@@ -160,3 +196,24 @@ def test_jsonapi_response_parity_order_insensitive() -> None:
         if not keep:
             cleanup_artifacts(left_bundle)
             cleanup_artifacts(right_bundle)
+
+
+def test_parse_request_paths_single_path_with_query_commas() -> None:
+    value = "/api/Order?page[offset]=0&page[limit]=1&include=Customer,Employee"
+    assert _parse_request_paths(value) == (value,)
+
+
+def test_parse_request_paths_from_json_array() -> None:
+    value = '["/api/Order?page[offset]=0&page[limit]=1", "/api/Customer?page[offset]=0&page[limit]=1"]'
+    assert _parse_request_paths(value) == (
+        "/api/Order?page[offset]=0&page[limit]=1",
+        "/api/Customer?page[offset]=0&page[limit]=1",
+    )
+
+
+def test_parse_request_paths_from_newlines() -> None:
+    value = "/api/Order?page[offset]=0&page[limit]=1\n/api/Customer?page[offset]=0&page[limit]=1"
+    assert _parse_request_paths(value) == (
+        "/api/Order?page[offset]=0&page[limit]=1",
+        "/api/Customer?page[offset]=0&page[limit]=1",
+    )
