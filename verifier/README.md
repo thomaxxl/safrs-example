@@ -46,6 +46,20 @@ Only parity tests:
 ../venv/bin/pytest -m parity
 ```
 
+JSON response parity (Flask vs FastAPI, order-insensitive):
+
+```bash
+../venv/bin/pytest -q tests/test_response_parity.py
+```
+
+Override target pair and request list:
+
+```bash
+SAFRS_PARITY_TARGETS=nw-flask,nw-fastapi \
+SAFRS_PARITY_REQUESTS='/api/Order?page[offset]=0&page[limit]=1&include=Customer,Employee' \
+../venv/bin/pytest -q tests/test_response_parity.py
+```
+
 Increase Schemathesis coverage:
 
 ```bash
