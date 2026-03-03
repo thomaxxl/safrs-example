@@ -61,11 +61,20 @@ def _resolve_log_level() -> int:
     return int(logging.INFO)
 
 
+def _debug_enabled() -> bool:
+    return _resolve_log_level() <= int(logging.DEBUG)
+
+
 def _configure_runtime_logging(level: int) -> None:
     if not logging.getLogger().handlers:
         logging.basicConfig(level=level, format="[%(asctime)s] %(levelname)s: %(message)s")
 
     safrs.log.setLevel(level)
+    if not safrs.log.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
+        safrs.log.addHandler(handler)
+    safrs.log.propagate = False
     logging.getLogger("uvicorn").setLevel(level)
     logging.getLogger("uvicorn.error").setLevel(level)
     logging.getLogger("uvicorn.access").setLevel(level)
@@ -103,6 +112,7 @@ def create_app(port: int = 8000) -> FastAPI:
         description=DESCRIPTION,
         docs_url="/docs",
         redoc_url=None,
+        debug=_debug_enabled(),
     )
 
     @app.middleware("http")
