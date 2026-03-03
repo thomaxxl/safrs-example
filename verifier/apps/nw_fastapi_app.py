@@ -45,19 +45,35 @@ def _is_truthy_env(value: str | None) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_log_level_value(value: str | None) -> int | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    try:
+        return int(normalized)
+    except ValueError:
+        upper = normalized.upper()
+        if upper in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            return int(getattr(logging, upper))
+    return None
+
+
 def _resolve_log_level() -> int:
+    loglevel_env = os.environ.get("LOGLEVEL")
+    parsed_loglevel = _parse_log_level_value(loglevel_env)
+    if parsed_loglevel is not None:
+        return parsed_loglevel
+
     debug_env = os.environ.get("DEBUG")
     if debug_env is not None:
-        normalized = str(debug_env).strip()
-        try:
-            return int(normalized)
-        except ValueError:
-            upper = normalized.upper()
-            if upper in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-                return int(getattr(logging, upper))
-            if _is_truthy_env(normalized):
-                return int(logging.DEBUG)
-            return int(logging.INFO)
+        parsed_debug = _parse_log_level_value(debug_env)
+        if parsed_debug is not None:
+            return parsed_debug
+        if _is_truthy_env(debug_env):
+            return int(logging.DEBUG)
+        return int(logging.INFO)
     if _is_truthy_env(os.environ.get("FLASK_DEBUG")):
         return int(logging.DEBUG)
     return int(logging.INFO)

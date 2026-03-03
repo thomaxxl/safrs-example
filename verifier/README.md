@@ -125,6 +125,7 @@ Harness options:
 - `SAFRS_VERIFY_APP_LOG_LINES` (default `200`)
 - `SAFRS_VERIFY_KEEP_ARTIFACTS` (default `1`)
 - `SAFRS_CONTRACT_TARGETS` (default all: `flask,fastapi,nw-flask,nw-fastapi`)
+- `LOGLEVEL` (optional integer Python log level; takes precedence over `DEBUG` / `FLASK_DEBUG`)
 
 Demo app options (set by harness automatically):
 
