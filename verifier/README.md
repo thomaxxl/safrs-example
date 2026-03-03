@@ -46,11 +46,19 @@ Only parity tests:
 ../venv/bin/pytest -m parity
 ```
 
-JSON response parity (Flask vs FastAPI, order-insensitive):
+JSON response parity (Flask vs FastAPI):
 
 ```bash
 ../venv/bin/pytest -q tests/test_response_parity.py
 ```
+
+Default parity matrix now covers:
+- collection pagination (`page[offset]/page[limit]` and `page[number]/page[size]`)
+- multi-sort (`sort=...`)
+- bracket CSV filters (`filter[Field]=a,b`)
+- sparse fieldsets
+- include-heavy instance / relationship fetches
+- representative error cases (status + error-code parity)
 
 Override target pair and request list:
 
@@ -66,6 +74,15 @@ For multiple requests, use JSON-array format (recommended):
 SAFRS_PARITY_REQUESTS='["/api/Order?page[offset]=0&page[limit]=1&include=Customer,Employee","/api/Customer?page[offset]=0&page[limit]=1"]' \
 ../venv/bin/pytest -q tests/test_response_parity.py
 ```
+
+Request objects are also supported for non-GET parity checks:
+
+```bash
+SAFRS_PARITY_REQUESTS='[{"method":"PATCH","path":"/api/Order/{seed:OrderId}/OrderDetailList","body":{}}]' \
+../venv/bin/pytest -q tests/test_response_parity.py
+```
+
+Seed placeholders use the left target `/seed` payload (for example `{seed:OrderId}`).
 
 Increase Schemathesis coverage:
 
