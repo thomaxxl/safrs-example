@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextvars
+import logging
 import os
 import sys
 import uuid
@@ -34,6 +35,40 @@ from models import (
 
 HERE = Path(__file__).resolve().parent
 REQUEST_SCOPE: contextvars.ContextVar[str] = contextvars.ContextVar("safrs_request_scope", default="startup")
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_log_level() -> int:
+    debug_env = os.environ.get("DEBUG")
+    if debug_env is not None:
+        normalized = str(debug_env).strip()
+        try:
+            return int(normalized)
+        except ValueError:
+            upper = normalized.upper()
+            if upper in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+                return int(getattr(logging, upper))
+            if _is_truthy_env(normalized):
+                return int(logging.DEBUG)
+            return int(logging.INFO)
+    if _is_truthy_env(os.environ.get("FLASK_DEBUG")):
+        return int(logging.DEBUG)
+    return int(logging.INFO)
+
+
+def _configure_runtime_logging(level: int) -> None:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=level, format="[%(asctime)s] %(levelname)s: %(message)s")
+
+    safrs.log.setLevel(level)
+    logging.getLogger("uvicorn").setLevel(level)
+    logging.getLogger("uvicorn.error").setLevel(level)
+    logging.getLogger("uvicorn.access").setLevel(level)
 
 
 def _should_reset_db() -> bool:
@@ -110,4 +145,12 @@ if __name__ == "__main__":
 
     bind_host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
     bind_port = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
-    uvicorn.run(create_app(port=bind_port), host=bind_host, port=bind_port)
+    log_level = _resolve_log_level()
+    _configure_runtime_logging(log_level)
+    uvicorn.run(
+        create_app(port=bind_port),
+        host=bind_host,
+        port=bind_port,
+        log_level="debug" if log_level <= logging.DEBUG else "info",
+        access_log=True,
+    )
