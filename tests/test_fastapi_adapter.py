@@ -14,7 +14,7 @@ from safrs import tx
 from safrs.errors import GenericError, JsonapiError, SystemValidationError, ValidationError
 from safrs.swagger_doc import jsonapi_rpc
 from sqlalchemy import DECIMAL, Column, ForeignKey, Integer, String, create_engine
-from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, StatementError
+from sqlalchemy.exc import CircularDependencyError, DataError, IntegrityError, InvalidRequestError, StatementError
 from sqlalchemy.orm import declarative_base, relationship, scoped_session, sessionmaker
 from sqlalchemy.orm.exc import FlushError
 from sqlalchemy.pool import StaticPool
@@ -281,6 +281,7 @@ def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) 
     things_get = paths["/FastThings"]["get"]
     things_post = paths["/FastThings"]["post"]
     thing_patch = paths["/FastThings/{object_id}"]["patch"]
+    thing_get = paths["/FastThings/{object_id}"]["get"]
 
     assert _response_schema_ref(things_get, "200").endswith("/FastThingDocumentCollection")
     assert _response_schema_ref(things_post, "201").endswith("/FastThingDocumentSingle")
@@ -307,6 +308,13 @@ def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) 
     assert "content" not in paths["/FastAuthors/{object_id}/books"]["delete"]["responses"]["204"]
     assert JSONAPI_MEDIA_TYPE in things_post["responses"]["422"]["content"]
     assert things_post["responses"]["422"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"].endswith("/JsonApiErrorDocument")
+    object_id_param = next(
+        parameter
+        for parameter in thing_get.get("parameters", [])
+        if parameter.get("name") == "object_id" and parameter.get("in") == "path"
+    )
+    assert object_id_param["schema"].get("type") == "string"
+    assert object_id_param["schema"].get("minLength") == 1
 
 
 def test_fastapi_create_example_includes_id_for_client_generated_ids() -> None:
@@ -672,6 +680,20 @@ def test_fastapi_relationship_item_mode_controls_schema_and_runtime(
             item_path = "/FastAuthors/{object_id}/books/{target_id}"
             paths = client.get("/openapi.json").json()["paths"]
             assert (item_path in paths) is expect_in_schema
+            if mode == RelationshipItemMode.ENABLED and item_path in paths:
+                item_parameters = paths[item_path]["get"].get("parameters", [])
+                object_id_param = next(
+                    parameter
+                    for parameter in item_parameters
+                    if parameter.get("name") == "object_id" and parameter.get("in") == "path"
+                )
+                target_id_param = next(
+                    parameter
+                    for parameter in item_parameters
+                    if parameter.get("name") == "target_id" and parameter.get("in") == "path"
+                )
+                assert object_id_param["schema"].get("minLength") == 1
+                assert target_id_param["schema"].get("minLength") == 1
 
             author_id = client.get("/FastAuthors").json()["data"][0]["id"]
             rel_items = client.get(f"/FastAuthors/{author_id}/books").json()["data"]
@@ -1365,6 +1387,11 @@ def test_fastapi_maps_sqlalchemy_errors_to_jsonapi_errors_with_rollback(fastapi_
         (DataError("stmt", {}, Exception("orig")), 400, "Invalid attribute value"),
         (StatementError("msg", "stmt", {}, Exception("orig")), 400, "Invalid attribute value"),
         (OverflowError("too big"), 400, "Invalid attribute value"),
+        (
+            CircularDependencyError("cycle", [], []),
+            409,
+            "Relationship update creates a circular dependency",
+        ),
         (FlushError("flush failed"), 409, "Relationship update violates DB constraints"),
         (InvalidRequestError("invalid request"), 409, "Relationship update violates DB constraints"),
     ]
