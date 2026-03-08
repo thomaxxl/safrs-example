@@ -271,6 +271,16 @@ def test_fastapi_swagger_alias_and_slash_parity(fastapi_client: TestClient) -> N
     assert with_slash.status_code == 200
 
 
+def test_fastapi_swagger_ui_defaults_collapse_operations_and_hide_schemas() -> None:
+    app = FastAPI()
+    SafrsFastAPI(app)
+
+    params = getattr(app, "swagger_ui_parameters", None)
+    assert isinstance(params, dict)
+    assert params.get("docExpansion") == "none"
+    assert params.get("defaultModelsExpandDepth") == -1
+
+
 def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) -> None:
     response = fastapi_client.get("/openapi.json")
     assert response.status_code == 200
