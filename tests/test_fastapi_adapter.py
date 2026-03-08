@@ -755,6 +755,20 @@ def test_fastapi_openapi_rpc_query_params_and_tags_documented(fastapi_client: Te
     assert tags["FastAuthors"]
 
 
+def test_fastapi_model_tag_description_uses_only_direct_model_docstring() -> None:
+    class BaseDoc:
+        """Base model doc that should not appear on child models."""
+
+    class NoDoc(BaseDoc):
+        pass
+
+    class WithDoc(BaseDoc):
+        """Concrete model doc."""
+
+    assert SafrsFastAPI._model_tag_description(NoDoc, "NoDocs") == "NoDocs operations"
+    assert SafrsFastAPI._model_tag_description(WithDoc, "WithDocs") == "Concrete model doc."
+
+
 def test_fastapi_uow_dependency_commit_and_rollback(monkeypatch: pytest.MonkeyPatch) -> None:
     app = FastAPI()
     api = SafrsFastAPI(app)
