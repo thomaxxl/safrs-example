@@ -11,7 +11,14 @@ import safrs
 from safrs.api_methods import duplicate
 from safrs import SAFRSBase
 from safrs import tx
-from safrs.errors import GenericError, JsonapiError, SystemValidationError, ValidationError
+from safrs.errors import (
+    GenericError,
+    JsonapiError,
+    SystemValidationError,
+    ValidationError,
+    reset_fastapi_request_url,
+    set_fastapi_request_url,
+)
 from safrs.swagger_doc import jsonapi_rpc
 from sqlalchemy import DECIMAL, Column, ForeignKey, Integer, String, create_engine
 from sqlalchemy.exc import CircularDependencyError, DataError, IntegrityError, InvalidRequestError, StatementError
@@ -1403,6 +1410,41 @@ def test_fastapi_maps_sqlalchemy_errors_to_jsonapi_errors_with_rollback(fastapi_
         assert exc_info.value.payload["errors"][0]["detail"] == expected_detail
 
     assert rollback_calls["count"] == len(cases)
+
+
+def test_fastapi_logs_integrity_error_diagnostics_at_debug(fastapi_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    api = fastapi_client.app.state.safrs_api
+    debug_calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+
+    monkeypatch.setattr(safrs.log, "isEnabledFor", lambda _level: True)
+    monkeypatch.setattr(safrs.DB.session, "rollback", lambda: None)
+
+    def fake_debug(message: Any, *args: Any, **kwargs: Any) -> None:
+        debug_calls.append((message, args, kwargs))
+
+    monkeypatch.setattr(safrs.log, "debug", fake_debug)
+
+    token = set_fastapi_request_url("http://testserver/api/Order/10835")
+    try:
+        with pytest.raises(JSONAPIHTTPError):
+            api._handle_safrs_exception(
+                IntegrityError(
+                    "DELETE FROM order WHERE id=:id",
+                    {"id": 10835},
+                    Exception("constraint failed"),
+                )
+            )
+    finally:
+        reset_fastapi_request_url(token)
+
+    assert debug_calls
+    _, debug_args, _ = debug_calls[-1]
+    assert debug_args[0] == "http://testserver/api/Order/10835"
+    assert debug_args[1] == "Order"
+    assert debug_args[2] == "10835"
+    assert "constraint failed" in repr(debug_args[3])
+    assert debug_args[4] == "DELETE FROM order WHERE id=:id"
+    assert debug_args[5] == {"id": 10835}
 
 
 def test_generic_error_debug_mode_works_without_flask_request_context(monkeypatch: pytest.MonkeyPatch) -> None:

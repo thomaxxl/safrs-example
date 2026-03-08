@@ -1,4 +1,5 @@
 import builtins
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -330,6 +331,7 @@ def test_http_method_decorator_relationship_notes_parent_and_target(app, monkeyp
 def test_http_method_decorator_maps_db_input_errors_to_client_errors(app, monkeypatch):
     abort_calls = []
     calls = {"rollback": 0}
+    debug_calls = []
 
     def fake_abort(status_code, errors=None):
         abort_calls.append((status_code, errors))
@@ -344,6 +346,12 @@ def test_http_method_decorator_maps_db_input_errors_to_client_errors(app, monkey
 
     monkeypatch.setattr(safrs_api, "abort", fake_abort)
     monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+    monkeypatch.setattr(safrs.log, "isEnabledFor", lambda level: level <= logging.DEBUG)
+
+    def fake_debug(message, *args, **kwargs):
+        debug_calls.append((message, args, kwargs))
+
+    monkeypatch.setattr(safrs.log, "debug", fake_debug)
 
     def overflowing_write(*_a, **_k):
         raise OverflowError("too large")
@@ -361,12 +369,20 @@ def test_http_method_decorator_maps_db_input_errors_to_client_errors(app, monkey
         raise sqlalchemy.exc.IntegrityError("stmt", {}, Exception("constraint"))
 
     wrapped_integrity = safrs_api.http_method_decorator(conflicting_write)
-    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+    with app.test_request_context("/api/Order/10835", method="DELETE", headers={"Content-Type": "application/vnd.api+json"}):
         with pytest.raises(RuntimeError):
             wrapped_integrity()
 
     assert abort_calls[-1][0] == 409
     assert abort_calls[-1][1][0]["detail"] == "Database constraint violation"
+    assert debug_calls
+    _, debug_args, _ = debug_calls[-1]
+    assert debug_args[0].endswith("/api/Order/10835")
+    assert debug_args[1] == "Order"
+    assert debug_args[2] == "10835"
+    assert "constraint" in repr(debug_args[3])
+    assert debug_args[4] == "stmt"
+    assert debug_args[5] == {}
 
 
 def test_http_method_decorator_maps_flush_time_relationship_conflicts_to_409(app, monkeypatch):
