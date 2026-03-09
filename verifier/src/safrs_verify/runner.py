@@ -147,6 +147,8 @@ class AppRunner:
         # Always run verifier app subprocesses in debug mode for easier diagnosis.
         env["DEBUG"] = "1"
         env["FLASK_DEBUG"] = "1"
+        # Disable app auto-reload in verifier subprocesses to keep single-process lifecycle stable.
+        env["SAFRS_DISABLE_RELOAD"] = "1"
 
         cmd = [sys.executable, str(self.app_path), self.host, str(resolved_port), *self.app_args]
 

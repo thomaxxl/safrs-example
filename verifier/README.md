@@ -150,6 +150,7 @@ Demo app options (set by harness automatically):
 - `SAFRS_EXAMPLE_RESET_DB` (default `1`)
 - `DEBUG=1` (always forced by verifier runner)
 - `FLASK_DEBUG=1` (always forced by verifier runner)
+- `SAFRS_DISABLE_RELOAD=1` (forced by verifier runner to keep subprocess lifecycle stable)
 
 NW app options:
 

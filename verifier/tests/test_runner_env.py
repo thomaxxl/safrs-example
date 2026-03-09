@@ -40,3 +40,4 @@ def test_app_runner_forces_debug_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(env, dict)
     assert env["DEBUG"] == "1"
     assert env["FLASK_DEBUG"] == "1"
+    assert env["SAFRS_DISABLE_RELOAD"] == "1"

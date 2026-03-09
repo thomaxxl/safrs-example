@@ -31,6 +31,30 @@ def test_flask_app_resolve_log_level_default_info(monkeypatch) -> None:  # type:
     assert nw_flask_app._resolve_log_level() == logging.INFO
 
 
+def test_flask_app_debug_enabled_from_env(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("LOGLEVEL", raising=False)
+    monkeypatch.setenv("DEBUG", "1")
+    monkeypatch.delenv("FLASK_DEBUG", raising=False)
+    assert flask_app._debug_enabled() is True
+    assert nw_flask_app._debug_enabled() is True
+
+
+def test_flask_app_reload_enabled_when_debug_enabled(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("SAFRS_DISABLE_RELOAD", raising=False)
+    monkeypatch.delenv("LOGLEVEL", raising=False)
+    monkeypatch.setenv("DEBUG", "1")
+    assert flask_app._reload_enabled() is True
+    assert nw_flask_app._reload_enabled() is True
+
+
+def test_flask_app_reload_disabled_when_env_override_set(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("SAFRS_DISABLE_RELOAD", "1")
+    monkeypatch.delenv("LOGLEVEL", raising=False)
+    monkeypatch.setenv("DEBUG", "1")
+    assert flask_app._reload_enabled() is False
+    assert nw_flask_app._reload_enabled() is False
+
+
 def test_flask_app_resolve_log_level_prefers_loglevel_env(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("LOGLEVEL", "40")
     monkeypatch.setenv("DEBUG", "1")

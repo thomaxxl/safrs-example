@@ -75,6 +75,16 @@ def _resolve_log_level() -> int:
     return int(logging.INFO)
 
 
+def _debug_enabled() -> bool:
+    return _resolve_log_level() <= int(logging.DEBUG)
+
+
+def _reload_enabled() -> bool:
+    if _is_truthy_env(os.environ.get("SAFRS_DISABLE_RELOAD")):
+        return False
+    return _debug_enabled()
+
+
 def _configure_runtime_logging(level: int) -> None:
     if not logging.getLogger().handlers:
         logging.basicConfig(level=level, format="[%(asctime)s] %(levelname)s: %(message)s")
@@ -154,6 +164,13 @@ def create_app(host: str = "127.0.0.1", port: int = 5000) -> Flask:
 if __name__ == "__main__":
     bind_host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
     bind_port = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
-    _configure_runtime_logging(_resolve_log_level())
+    log_level = _resolve_log_level()
+    _configure_runtime_logging(log_level)
     flask_app = create_app(host=bind_host, port=bind_port)
-    flask_app.run(host=bind_host, port=bind_port, threaded=False)
+    flask_app.run(
+        host=bind_host,
+        port=bind_port,
+        threaded=False,
+        debug=(log_level <= int(logging.DEBUG)),
+        use_reloader=_reload_enabled(),
+    )
