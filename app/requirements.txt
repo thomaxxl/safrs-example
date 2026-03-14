@@ -1,0 +1,11 @@
+Flask
+Flask-Cors
+Flask-Migrate
+Flask-SQLAlchemy
+SQLAlchemy
+fastapi[standard]
+flask-swagger-ui
+flask_httpauth
+gunicorn
+psycopg2-binary
+safrs
