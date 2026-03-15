@@ -37,6 +37,10 @@ def test_db_settings(client, mock_thing):
 
     twc = models.ThingWCommit(name="tmp_name2")
     res = client.get(f"/thing_with_commit/{twc.id}") 
+    assert res.status_code == 404
+    models.db.session.add(twc)
+    models.db.session.commit()
+    res = client.get(f"/thing_with_commit/{twc.id}") 
     assert res.status_code == 200
 
     twc2 = models.ThingWCommit(id=twc.id)
@@ -87,6 +91,8 @@ def test_Type(client, mock_thing):
     my_type = "test"
     twt = models.ThingWType()
     twt.type = my_type
+    models.db.session.add(twt)
+    models.db.session.commit()
    
     res = client.get(f"/thing_with_type")
     assert res.status_code == 200
@@ -558,9 +564,10 @@ def test_post_book_author(client):
     assert res.status_code == 404
     json = { "data" : { "type" : author_type, "id" : author_id }}
     res = client.post(f"/Books/{book_id}/author", json=json)
-    response_data = res.get_json()["data"]
-    assert response_data["id"] == author_id
-    assert res.status_code == 200
+    assert res.status_code == 405
+    assert "errors" in res.get_json()
+    res = client.patch(f"/Books/{book_id}/author", json=json)
+    assert res.status_code == 204
     res = client.get(f"/Books/{book_id}/author")
     response_data = res.get_json()
     author = response_data["data"]
@@ -627,6 +634,7 @@ def test_hidden_column(client):
     db_person = models.Person.get_instance(person_id)
     db_person.password = "test"
     assert getattr(db_person,"password") == "test"
+    models.db.session.commit()
 
     res = client.get(f"/People/{person_id}")
     assert res.status_code == 200

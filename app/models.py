@@ -1,4 +1,4 @@
-from safrs import jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response, paginate
+from safrs import ValidationError, jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response, paginate
 from safrs.api_methods import startswith, duplicate
 from sqlalchemy import func
 from app.base_model import db, BaseModel
@@ -75,6 +75,28 @@ class Thing(BaseModel):
     @jsonapi_rpc(http_methods=["POST", "GET"])
     def none(self):
         return {}
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def resource_by_name(cls, name=""):
+        return cls.query.filter_by(name=name).one_or_none()
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def scalar_echo(cls, value=""):
+        return value
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def return_none(cls):
+        return None
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"])
+    def validate_name(cls, name=""):
+        if not name:
+            raise ValidationError("name is required")
+        return {"name": name}
 
     @jsonapi_attr
     def some_attr(self):
@@ -204,6 +226,16 @@ class Person(BaseModel):
 
         return response
 
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"], valid_jsonapi=False)
+    def echo_plain(cls, message=""):
+        """
+            description: Echo a plain JSON RPC payload
+            args:
+                message: hello
+        """
+        return {"message": message}
+
 
 class Publisher(BaseModel):
     """
@@ -312,9 +344,11 @@ class UserWithJsonapiAttr(SAFRSBase, db.Model):
     """
 
     __tablename__ = "UsersWithJsonapiAttr"
+    exclude_attrs = ["secret_store"]
     id = db.Column(db.String, primary_key=True)
     name = db.Column(db.String)
     email = db.Column(db.String)
+    secret_store = db.Column(db.String, default="")
     
     @jsonapi_attr
     def some_attr(self):
@@ -322,8 +356,39 @@ class UserWithJsonapiAttr(SAFRSBase, db.Model):
     
     @some_attr.setter
     def some_attr(self, val):
-        print("some_attr setter value:", val)
         self.name = val
+
+    @jsonapi_attr(
+        read_only=True,
+        description="Computed summary derived from the current name",
+        default="summary:jsonapi-attr-name",
+    )
+    def readonly_value(self):
+        current_name = self.name or "anonymous"
+        return f"summary:{current_name}"
+
+    @jsonapi_attr(
+        description="Write-only secret input",
+        default="example-secret",
+        swagger_format="password",
+        write_only=True,
+    )
+    def secret(self):
+        return "********"
+
+    @secret.setter
+    def secret(self, val):
+        self.secret_store = hashlib.sha256(val.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _s_sample_dict():
+        return {
+            "name": "jsonapi-attr-name",
+            "email": "jsonapi@example.com",
+            "some_attr": "via-jsonapi-attr",
+            "readonly_value": "summary:jsonapi-attr-name",
+            "secret": "example-secret",
+        }
 
 from sqlalchemy.ext.hybrid import hybrid_method
 class UserWithPerms(SAFRSBase, db.Model):
@@ -340,4 +405,3 @@ class UserWithPerms(SAFRSBase, db.Model):
     def _s_check_perm(self, property_name, permission="r"):
         if property_name == "email":
             return False
-

@@ -28,6 +28,8 @@ def _person_rpc_api():
 def _rel_api_stub(direction, parse_args_fn, target=None):
     api = object.__new__(jsonapi.SAFRSRestRelationshipAPI)
     api.SAFRSObject = SimpleNamespace(relationship=SimpleNamespace(direction=direction))
+    api.relationship = api.SAFRSObject.relationship
+    api.source_class = SimpleNamespace(__name__="Parent")
     api.parse_args = parse_args_fn
     api.target = target or SimpleNamespace(_s_type="Target", get_instance=lambda _id: None)
     api.child_object_id = "ChildId"
@@ -421,4 +423,7 @@ def test_jsonrpc_create_response_non_jsonapi_and_default_meta(app):
 
         default_resp = rpc_api._create_rpc_response(default_method, {})
         assert default_resp.status_code == 200
-        assert default_resp.get_json() == {"meta": {"result": 42}}
+        assert default_resp.get_json() == {
+            "jsonapi": {"version": "1.0"},
+            "meta": {"result": 42},
+        }

@@ -1,0 +1,14 @@
+.artifacts/
+.hypothesis/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+apps/nw_flask_*.sqlite
+apps/nw_fastapi_*.sqlite
+openapi.json
+swagger.json
+verify.log
+
+mail.txt

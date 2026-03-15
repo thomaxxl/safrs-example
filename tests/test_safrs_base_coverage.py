@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from flask import g
 import safrs
 import safrs.base as safrs_base
+from safrs import jsonapi_rpc
 from sqlalchemy.exc import InvalidRequestError
 
 from app import models
@@ -136,7 +137,7 @@ def test_get_related_branches(app, api, db_session, monkeypatch):
     with app.test_request_context("/?include=books&exclude=books"):
         g.ja_included = set()
         g.ja_data = set()
-        rels = pub._s_get_related()
+        rels = db_session.get(models.Publisher, pub.id)._s_get_related()
         assert "books" in rels
 
     orig_get_config = safrs_base.get_config
@@ -149,7 +150,7 @@ def test_get_related_branches(app, api, db_session, monkeypatch):
     with app.test_request_context("/?include=books"):
         g.ja_included = set()
         g.ja_data = set()
-        rels = pub._s_get_related()
+        rels = db_session.get(models.Publisher, pub.id)._s_get_related()
         assert "warning" in rels["books"].get("meta", {})
 
     monkeypatch.setattr(
@@ -160,8 +161,26 @@ def test_get_related_branches(app, api, db_session, monkeypatch):
     with app.test_request_context("/?include=books"):
         g.ja_included = set()
         g.ja_data = set()
-        rels = pub._s_get_related()
+        rels = db_session.get(models.Publisher, pub.id)._s_get_related()
         assert "warning" in rels["books"].get("meta", {})
+
+
+def test_get_jsonapi_rpc_methods_uses_static_member_lookup() -> None:
+    class ExplodingDescriptor:
+        def __get__(self, instance, owner=None):
+            raise RuntimeError("descriptor should not be evaluated during rpc discovery")
+
+    class RpcProbe:
+        exploding = ExplodingDescriptor()
+
+        @classmethod
+        @jsonapi_rpc(http_methods=["POST"])
+        def ping(cls):
+            return None
+
+    methods = safrs_base.SAFRSBase._s_get_jsonapi_rpc_methods.__func__(RpcProbe)
+
+    assert [method.__name__ for method in methods] == ["ping"]
 
 
 def test_count_and_sample_id_and_sample_dict(monkeypatch):
@@ -213,10 +232,10 @@ def test_count_and_sample_id_and_sample_dict(monkeypatch):
 
 
 def test_rpc_methods_s_url_type_setter_and_in_filter(monkeypatch, db_session):
-    def boom_getmembers(*_a, **_k):
+    def boom_getattr_static(*_a, **_k):
         raise InvalidRequestError("boom")
 
-    monkeypatch.setattr(safrs_base.inspect, "getmembers", boom_getmembers)
+    monkeypatch.setattr(safrs_base.inspect, "getattr_static", boom_getattr_static)
     assert models.Thing._s_get_jsonapi_rpc_methods() == []
 
     thing = models.Thing(name="url-thing", description="d")
@@ -265,6 +284,22 @@ def test_init_with_Type_kwarg_sets_type_column(monkeypatch):
     monkeypatch.setattr(safrs.DB.session, "commit", lambda: None)
     twt = models.ThingWType(Type="MyType")
     assert twt.type == "MyType"
+
+
+def test_init_does_not_add_or_commit_implicitly(monkeypatch):
+    calls = {"add": 0, "commit": 0}
+
+    def fake_add(_obj):
+        calls["add"] += 1
+
+    def fake_commit():
+        calls["commit"] += 1
+
+    monkeypatch.setattr(safrs.DB.session, "add", fake_add)
+    monkeypatch.setattr(safrs.DB.session, "commit", fake_commit)
+    models.Thing(name="constructor-only", description="x")
+    assert calls["add"] == 0
+    assert calls["commit"] == 0
 
 
 def test_init_with_jsonapi_attr_kwarg_calls_setter():
@@ -393,6 +428,88 @@ def test_auto_commit_setter_sets_db_commit_flag():
         assert models.Thing.db_commit is orig
 
 
+def test_s_post_marks_write_and_honors_db_commit_flag(db_session):
+    orig = models.Thing.db_commit
+    try:
+        models.Thing.db_commit = True
+        token = safrs.tx.begin_request()
+        try:
+            models.Thing._s_post(None, name="uow-default", description="d")
+            assert safrs.tx.has_writes() is True
+            assert safrs.tx.should_autocommit() is True
+        finally:
+            safrs.tx.end_request(token)
+            db_session.rollback()
+
+        models.Thing.db_commit = False
+        token = safrs.tx.begin_request()
+        try:
+            models.Thing._s_post(None, name="uow-optout", description="d")
+            assert safrs.tx.has_writes() is True
+            assert safrs.tx.should_autocommit() is False
+        finally:
+            safrs.tx.end_request(token)
+            db_session.rollback()
+    finally:
+        models.Thing.db_commit = orig
+
+
+def test_tx_session_state_backend_tracks_writes_and_opt_out(monkeypatch):
+    class Session:
+        def __init__(self):
+            self.info = {}
+
+    session = Session()
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=session))
+
+    session.info["_safrs_uow_active"] = True
+    session.info["_safrs_writes_seen"] = False
+    session.info["_safrs_auto_commit_enabled"] = True
+
+    class CommitModel:
+        db_commit = True
+
+    class NoCommitModel:
+        db_commit = False
+
+    safrs.tx.note_write(CommitModel)
+    assert safrs.tx.in_request() is True
+    assert safrs.tx.has_writes() is True
+    assert safrs.tx.should_autocommit() is True
+
+    session.info["_safrs_writes_seen"] = False
+    session.info["_safrs_auto_commit_enabled"] = True
+    safrs.tx.note_write(NoCommitModel)
+    assert safrs.tx.has_writes() is True
+    assert safrs.tx.should_autocommit() is False
+
+    session.info["_safrs_writes_seen"] = True
+    session.info["_safrs_auto_commit_enabled"] = True
+    safrs.tx.disable_autocommit()
+    assert safrs.tx.should_autocommit() is False
+
+    session.info["_safrs_uow_active"] = False
+    assert safrs.tx.in_request() is False
+
+
+def test_model_auto_commit_enabled_ignores_inherited_db_commit() -> None:
+    class BaseNoCommit:
+        db_commit = False
+
+    class ChildNoOverride(BaseNoCommit):
+        pass
+
+    class ChildOverrideFalse(BaseNoCommit):
+        db_commit = False
+
+    class ChildOverrideTrue(BaseNoCommit):
+        db_commit = True
+
+    assert safrs.tx.model_auto_commit_enabled(ChildNoOverride) is True
+    assert safrs.tx.model_auto_commit_enabled(ChildOverrideFalse) is False
+    assert safrs.tx.model_auto_commit_enabled(ChildOverrideTrue) is True
+
+
 def test_get_instance_by_id_and_s_query_error_paths(monkeypatch, db_session):
     """
     Covers:
@@ -480,4 +597,3 @@ def test_unicode_and_http_methods_cover_remaining_lines(monkeypatch):
 
     assert t.__unicode__() == "n"      # covers 1087-1088
     assert "GET" in t.http_methods     # covers 554
-

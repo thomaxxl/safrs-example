@@ -1,13 +1,16 @@
 import builtins
+import logging
 from types import SimpleNamespace
 
 import pytest
+import sqlalchemy
 import werkzeug
 from flask import Response
 from flask_restful import Resource
 
 import safrs
 import safrs.safrs_api as safrs_api
+from safrs import tx as safrs_tx
 from safrs.errors import SystemValidationError
 
 
@@ -230,3 +233,219 @@ def test_api_decorator_and_http_method_decorator_branches(app, monkeypatch):
             wrapped_generic()
     assert abort_calls[-1][1][0]["title"] == "Logging Disabled"
     safrs.log.setLevel(old_level)
+
+
+def test_http_method_decorator_request_uow_commit_and_opt_out(app, monkeypatch):
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self):
+            calls["commit"] += 1
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    class NoCommitModel:
+        db_commit = False
+
+    def get(*_a, **_k):
+        safrs_tx.note_write(CommitModel)
+        return {"ok": True}
+
+    wrapped_commit = safrs_api.http_method_decorator(get)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        assert wrapped_commit() == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 0
+
+    def get_no_commit(*_a, **_k):
+        safrs_tx.note_write(NoCommitModel)
+        return {"ok": True}
+
+    wrapped_no_commit = safrs_api.http_method_decorator(get_no_commit)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        assert wrapped_no_commit() == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+
+    def get(*_a, **_k):
+        return {"ok": True}
+
+    wrapped_read = safrs_api.http_method_decorator(get)
+    with app.test_request_context("/", method="GET"):
+        assert wrapped_read() == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 2
+
+
+def test_http_method_decorator_relationship_notes_parent_and_target(app, monkeypatch):
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self):
+            calls["commit"] += 1
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class ParentCommit:
+        db_commit = True
+
+    class TargetCommit:
+        db_commit = True
+
+    class ParentNoCommit:
+        db_commit = False
+
+    class RelWrapperCommit:
+        parent = ParentCommit
+        _target = TargetCommit
+
+    class RelWrapperNoCommit:
+        parent = ParentNoCommit
+        _target = TargetCommit
+
+    def handler(*_a, **_k):
+        return {"ok": True}
+
+    wrapped = safrs_api.http_method_decorator(handler)
+
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        assert wrapped(SimpleNamespace(SAFRSObject=RelWrapperCommit)) == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 0
+
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        assert wrapped(SimpleNamespace(SAFRSObject=RelWrapperNoCommit)) == {"ok": True}
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+
+
+def test_http_method_decorator_maps_db_input_errors_to_client_errors(app, monkeypatch):
+    abort_calls = []
+    calls = {"rollback": 0}
+    debug_calls = []
+
+    def fake_abort(status_code, errors=None):
+        abort_calls.append((status_code, errors))
+        raise RuntimeError("aborted")
+
+    class Session:
+        def commit(self):
+            return None
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs_api, "abort", fake_abort)
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+    monkeypatch.setattr(safrs.log, "isEnabledFor", lambda level: level <= logging.DEBUG)
+
+    def fake_debug(message, *args, **kwargs):
+        debug_calls.append((message, args, kwargs))
+
+    monkeypatch.setattr(safrs.log, "debug", fake_debug)
+
+    def overflowing_write(*_a, **_k):
+        raise OverflowError("too large")
+
+    wrapped_overflow = safrs_api.http_method_decorator(overflowing_write)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        with pytest.raises(RuntimeError):
+            wrapped_overflow()
+
+    assert abort_calls[-1][0] == 400
+    assert abort_calls[-1][1][0]["detail"] == "Invalid attribute value"
+    assert calls["rollback"] >= 1
+
+    def conflicting_write(*_a, **_k):
+        raise sqlalchemy.exc.IntegrityError("stmt", {}, Exception("constraint"))
+
+    wrapped_integrity = safrs_api.http_method_decorator(conflicting_write)
+    with app.test_request_context("/api/Order/10835", method="DELETE", headers={"Content-Type": "application/vnd.api+json"}):
+        with pytest.raises(RuntimeError):
+            wrapped_integrity()
+
+    assert abort_calls[-1][0] == 409
+    assert abort_calls[-1][1][0]["detail"] == "Database constraint violation"
+    assert debug_calls
+    _, debug_args, _ = debug_calls[-1]
+    assert debug_args[0].endswith("/api/Order/10835")
+    assert debug_args[1] == "Order"
+    assert debug_args[2] == "10835"
+    assert "constraint" in repr(debug_args[3])
+    assert debug_args[4] == "stmt"
+    assert debug_args[5] == {}
+
+
+def test_http_method_decorator_maps_flush_time_relationship_conflicts_to_409(app, monkeypatch):
+    abort_calls = []
+    calls = {"rollback": 0}
+
+    def fake_abort(status_code, errors=None):
+        abort_calls.append((status_code, errors))
+        raise RuntimeError("aborted")
+
+    class Session:
+        def commit(self):
+            raise sqlalchemy.orm.exc.FlushError("dependency rule tried to blank-out primary key column")
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs_api, "abort", fake_abort)
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    def flush_conflict_write(*_a, **_k):
+        safrs_tx.note_write(CommitModel)
+        return {"ok": True}
+
+    wrapped = safrs_api.http_method_decorator(flush_conflict_write)
+    with app.test_request_context("/", method="POST", headers={"Content-Type": "application/vnd.api+json"}):
+        with pytest.raises(RuntimeError):
+            wrapped()
+
+    assert abort_calls[-1][0] == 409
+    assert abort_calls[-1][1][0]["detail"] == "Relationship update violates DB constraints"
+    assert calls["rollback"] == 1
+
+
+def test_http_method_decorator_maps_pk_blank_assertions_to_409(app, monkeypatch):
+    abort_calls = []
+    calls = {"rollback": 0}
+
+    def fake_abort(status_code, errors=None):
+        abort_calls.append((status_code, errors))
+        raise RuntimeError("aborted")
+
+    class Session:
+        def commit(self):
+            return None
+
+        def rollback(self):
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs_api, "abort", fake_abort)
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    def unsafe_relationship_write(*_a, **_k):
+        raise AssertionError("Dependency rule tried to blank-out primary key column 'Reviews.book_id'")
+
+    wrapped = safrs_api.http_method_decorator(unsafe_relationship_write)
+    with app.test_request_context("/", method="PATCH", headers={"Content-Type": "application/vnd.api+json"}):
+        with pytest.raises(RuntimeError):
+            wrapped()
+
+    assert abort_calls[-1][0] == 409
+    assert abort_calls[-1][1][0]["detail"] == "Relationship update violates DB constraints"
+    assert calls["rollback"] == 1

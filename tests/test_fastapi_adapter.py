@@ -1,21 +1,44 @@
+import json
+import datetime as dt
+import decimal
 from types import SimpleNamespace
 from typing import Any, Generator
+from urllib.parse import quote
 
 import pytest
 
 import safrs
 from safrs.api_methods import duplicate
 from safrs import SAFRSBase
-from safrs.errors import JsonapiError, SystemValidationError, ValidationError
+from safrs import tx
+from safrs.errors import (
+    GenericError,
+    JsonapiError,
+    SystemValidationError,
+    ValidationError,
+    reset_fastapi_request_url,
+    set_fastapi_request_url,
+)
 from safrs.swagger_doc import jsonapi_rpc
-from sqlalchemy import Column, ForeignKey, Integer, String, create_engine
+from sqlalchemy import DECIMAL, Column, ForeignKey, Integer, String, create_engine
+from sqlalchemy.exc import CircularDependencyError, DataError, IntegrityError, InvalidRequestError, StatementError
 from sqlalchemy.orm import declarative_base, relationship, scoped_session, sessionmaker
+from sqlalchemy.orm.exc import FlushError
 from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-from safrs.fastapi.api import JSONAPIHTTPError, SafrsFastAPI
+from pydantic import BaseModel
+from safrs.fastapi.api import (
+    JSONAPIHTTPError,
+    JSONAPI_MEDIA_TYPE,
+    RelationshipItemMode,
+    SafrsFastAPI,
+    install_jsonapi_exception_handlers,
+)
+from safrs.fastapi.responses import JSONAPIResponse
+from safrs.fastapi.schemas.from_sqlalchemy import _jsonapi_attr_return_type, _safe_python_type
 
 
 Base = declarative_base()
@@ -35,9 +58,14 @@ class FastAuthor(SAFRSBase, Base):
     duplicate = duplicate
 
     @classmethod
-    @jsonapi_rpc(http_methods=["POST"])
+    @jsonapi_rpc(http_methods=["POST", "GET"])
     def lookup_by_name(cls, name: str = "") -> dict[str, Any]:
         return {"meta": {"name": name, "count": cls.query.filter_by(name=name).count()}}
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"], valid_jsonapi=False)
+    def echo_plain(cls, message: str = "") -> dict[str, Any]:
+        return {"message": message}
 
 
 class FastBook(SAFRSBase, Base):
@@ -61,6 +89,76 @@ class FastThing(SAFRSBase, Base):
     def prefix_name(self, prefix: str = "") -> dict[str, Any]:
         return {"meta": {"value": f"{prefix}{self.name}"}}
 
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def resource_by_name(cls, name: str = "") -> Any:
+        return cls.query.filter_by(name=name).one_or_none()
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def scalar_echo(cls, value: str = "") -> str:
+        return value
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def return_none(cls) -> None:
+        return None
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"])
+    def validate_name(cls, name: str = "") -> dict[str, str]:
+        if not name:
+            raise ValidationError("name is required")
+        return {"name": name}
+
+
+class FastClientIdThing(SAFRSBase, Base):
+    __tablename__ = "FastClientIdThings"
+    allow_client_generated_ids = True
+
+    id = Column(String, primary_key=True)
+    name = Column(String)
+
+
+class FastLegacyIdThing(SAFRSBase, Base):
+    __tablename__ = "FastLegacyIdThings"
+    allow_client_generated_ids = True
+
+    Id = Column(String, primary_key=True)
+    name = Column(String)
+
+
+class FastCompositeIdThing(SAFRSBase, Base):
+    __tablename__ = "FastCompositeIdThings"
+    allow_client_generated_ids = True
+
+    country = Column(String, primary_key=True)
+    city = Column(String, primary_key=True)
+    name = Column(String)
+
+
+class FastDecimalThing(SAFRSBase, Base):
+    __tablename__ = "FastDecimalThings"
+
+    id = Column(Integer, primary_key=True)
+    price = Column(DECIMAL)
+
+
+class FastLimitedThing(SAFRSBase, Base):
+    __tablename__ = "FastLimitedThings"
+    http_methods = {"GET", "POST"}
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+
+
+class FastLimitedThingCSV(SAFRSBase, Base):
+    __tablename__ = "FastLimitedThingsCSV"
+    http_methods = "GET,POST"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+
 
 def _request(query: str = "") -> Request:
     return Request(
@@ -72,6 +170,43 @@ def _request(query: str = "") -> Request:
             "query_string": query.encode(),
         }
     )
+
+
+def _request_with_method(method: str, query: str = "") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": method.upper(),
+            "path": "/",
+            "headers": [],
+            "query_string": query.encode(),
+        }
+    )
+
+
+def _response_schema_ref(operation: dict[str, Any], status_code: str) -> str:
+    response = operation["responses"][status_code]
+    content = response.get("content", {})
+    if JSONAPI_MEDIA_TYPE in content:
+        return content[JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    if "application/json" in content:
+        return content["application/json"]["schema"]["$ref"]
+    first_media = next(iter(content.values()))
+    return first_media["schema"]["$ref"]
+
+
+def _query_param_names(operation: dict[str, Any]) -> set[str]:
+    return {
+        str(parameter.get("name"))
+        for parameter in operation.get("parameters", [])
+        if parameter.get("in") == "query"
+    }
+
+
+def _json_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, JSONAPIResponse):
+        return json.loads(value.body.decode())
+    return value
 
 
 @pytest.fixture()
@@ -163,6 +298,701 @@ def test_fastapi_swagger_alias_and_slash_parity(fastapi_client: TestClient) -> N
     assert with_slash.status_code == 200
 
 
+def test_fastapi_swagger_ui_defaults_collapse_operations_and_hide_schemas() -> None:
+    app = FastAPI()
+    SafrsFastAPI(app)
+
+    params = getattr(app, "swagger_ui_parameters", None)
+    assert isinstance(params, dict)
+    assert params.get("docExpansion") == "none"
+    assert params.get("defaultModelsExpandDepth") == -1
+
+
+def test_fastapi_openapi_documents_generated_models(fastapi_client: TestClient) -> None:
+    response = fastapi_client.get("/openapi.json")
+    assert response.status_code == 200
+    openapi = response.json()
+
+    schemas = openapi["components"]["schemas"]
+    assert "FastThingAttributes" in schemas
+    assert "FastThingResource" in schemas
+    assert "FastThingDocumentSingle" in schemas
+    assert "FastThingDocumentCollection" in schemas
+    assert "FastBookRelationships" in schemas
+    assert "JsonApiErrorDocument" in schemas
+
+    paths = openapi["paths"]
+    things_get = paths["/FastThings"]["get"]
+    things_post = paths["/FastThings"]["post"]
+    thing_patch = paths["/FastThings/{object_id}"]["patch"]
+    thing_get = paths["/FastThings/{object_id}"]["get"]
+
+    assert _response_schema_ref(things_get, "200").endswith("/FastThingDocumentCollection")
+    assert _response_schema_ref(things_post, "201").endswith("/FastThingDocumentSingle")
+    assert _response_schema_ref(thing_patch, "200").endswith("/FastThingDocumentSingle")
+    assert _response_schema_ref(things_get, "400").endswith("/JsonApiErrorDocument")
+    assert "id" not in schemas["FastThingCreateResource"].get("required", [])
+    assert "id" in schemas["FastThingPatchResource"].get("required", [])
+
+    post_request_ref = things_post["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    patch_request_ref = thing_patch["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    post_example = things_post["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    patch_example = thing_patch["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    assert post_request_ref.endswith("/FastThingDocumentCreate")
+    assert patch_request_ref.endswith("/FastThingDocumentPatch")
+    assert isinstance(post_example, dict)
+    assert post_example["data"]["type"] == "FastThing"
+    assert "attributes" in post_example["data"]
+    assert isinstance(patch_example, dict)
+    assert patch_example["data"]["type"] == "FastThing"
+    assert "id" in patch_example["data"]
+    assert "attributes" in patch_example["data"]
+    assert "204" in paths["/FastThings/{object_id}"]["delete"]["responses"]
+    assert "content" not in paths["/FastThings/{object_id}"]["delete"]["responses"]["204"]
+    assert "content" not in paths["/FastAuthors/{object_id}/books"]["delete"]["responses"]["204"]
+    assert JSONAPI_MEDIA_TYPE in things_post["responses"]["422"]["content"]
+    assert things_post["responses"]["422"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"].endswith("/JsonApiErrorDocument")
+    object_id_param = next(
+        parameter
+        for parameter in thing_get.get("parameters", [])
+        if parameter.get("name") == "object_id" and parameter.get("in") == "path"
+    )
+    assert object_id_param["schema"].get("type") == "string"
+    assert object_id_param["schema"].get("minLength") == 1
+
+
+def test_fastapi_create_example_includes_id_for_client_generated_ids() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        Session.add(FastClientIdThing(id="cid-1", name="client"))
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastClientIdThing)
+
+        with TestClient(app) as client:
+            openapi = client.get("/openapi.json").json()
+            paths = openapi["paths"]
+            schemas = openapi["components"]["schemas"]
+            create_example = paths["/FastClientIdThings"]["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["example"]
+            assert create_example["data"]["type"] == "FastClientIdThing"
+            assert "id" in create_example["data"]
+            assert "id" in schemas["FastClientIdThingCreateResource"]["required"]
+            assert "id" in schemas["FastClientIdThingPatchResource"]["required"]
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_post_nonstandard_client_generated_id_is_validated_and_mapped() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastLegacyIdThing)
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            missing_id = client.post(
+                "/FastLegacyIdThings",
+                json={
+                    "data": {
+                        "type": "FastLegacyIdThing",
+                        "attributes": {"name": "missing-id"},
+                    }
+                },
+            )
+            assert missing_id.status_code == 400
+            assert "Missing resource id" in missing_id.json()["errors"][0]["detail"]
+
+            created = client.post(
+                "/FastLegacyIdThings",
+                json={
+                    "data": {
+                        "type": "FastLegacyIdThing",
+                        "id": "legacy-1",
+                        "attributes": {"name": "created"},
+                    }
+                },
+            )
+            assert created.status_code == 201
+            assert created.json()["data"]["id"] == "legacy-1"
+            stored = Session.query(FastLegacyIdThing).filter_by(Id="legacy-1").one_or_none()
+            assert stored is not None
+            assert stored.name == "created"
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_extract_pks_accepts_jsonapi_id_when_pk_column_names_are_not_id() -> None:
+    assert FastLegacyIdThing.id_type.extract_pks({"id": "legacy-2"}) == {"Id": "legacy-2"}
+    assert FastCompositeIdThing.id_type.extract_pks({"id": "US_Boston"}) == {"country": "US", "city": "Boston"}
+
+
+def test_s_post_accepts_explicit_pk_columns_for_client_generated_composite_id() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        created = FastCompositeIdThing._s_post(None, country="US", city="Austin", name="capital")
+        Session.flush()
+        assert created.country == "US"
+        assert created.city == "Austin"
+        assert str(created.jsonapi_id) == "US_Austin"
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_openapi_decimal_columns_use_number_schema() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastDecimalThing)
+
+        with TestClient(app) as client:
+            openapi = client.get("/openapi.json").json()
+            attrs = openapi["components"]["schemas"]["FastDecimalThingAttributes"]["properties"]
+            price_schema = attrs["price"]
+            any_of = price_schema.get("anyOf", [])
+            types = {entry.get("type") for entry in any_of if isinstance(entry, dict)}
+
+            assert "number" in types
+            assert "string" not in types
+            assert "pattern" not in json.dumps(price_schema)
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_decimal_type_normalization_helpers() -> None:
+    assert _safe_python_type(Column("amount", DECIMAL)) is float
+
+    class DecimalAnnotated:
+        @property
+        def total(self) -> decimal.Decimal:
+            return decimal.Decimal("0")
+
+    assert _jsonapi_attr_return_type(DecimalAnnotated, "total") is float
+
+
+def test_fastapi_crud_route_registration_respects_model_http_methods() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        Session.add(FastLimitedThing(name="limited"))
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastLimitedThing)
+
+        with TestClient(app) as client:
+            paths = client.get("/openapi.json").json()["paths"]
+            collection_path = "/FastLimitedThings"
+            instance_path = "/FastLimitedThings/{object_id}"
+
+            assert "get" in paths[collection_path]
+            assert "post" in paths[collection_path]
+            assert "get" in paths[instance_path]
+            assert "patch" not in paths[instance_path]
+            assert "delete" not in paths[instance_path]
+
+            patch_response = client.patch(
+                "/FastLimitedThings/1",
+                json={"data": {"id": "1", "type": "FastLimitedThing", "attributes": {"name": "x"}}},
+            )
+            assert patch_response.status_code == 405
+            payload = patch_response.json()
+            assert "errors" in payload
+            assert payload["errors"][0]["status"] == "405"
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_crud_route_registration_respects_csv_model_http_methods() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        Session.add(FastLimitedThingCSV(name="limited-csv"))
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastLimitedThingCSV)
+
+        with TestClient(app) as client:
+            paths = client.get("/openapi.json").json()["paths"]
+            collection_path = "/FastLimitedThingsCSV"
+            instance_path = "/FastLimitedThingsCSV/{object_id}"
+
+            assert "get" in paths[collection_path]
+            assert "post" in paths[collection_path]
+            assert "get" in paths[instance_path]
+            assert "patch" not in paths[instance_path]
+            assert "delete" not in paths[instance_path]
+
+            patch_response = client.patch(
+                "/FastLimitedThingsCSV/1",
+                json={"data": {"id": "1", "type": "FastLimitedThingCSV", "attributes": {"name": "x"}}},
+            )
+            assert patch_response.status_code == 405
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_openapi_relationship_docs_use_resource_docs_for_get_and_linkage_for_mutations(
+    fastapi_client: TestClient,
+) -> None:
+    response = fastapi_client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+
+    author_rel = paths["/FastBooks/{object_id}/author"]
+    books_rel = paths["/FastAuthors/{object_id}/books"]
+
+    assert _response_schema_ref(author_rel["get"], "200").endswith("/FastAuthorDocumentSingle")
+    assert _response_schema_ref(books_rel["get"], "200").endswith("/FastBookDocumentCollection")
+    assert "/FastAuthors/{object_id}/books/{target_id}" not in paths
+    assert "post" not in author_rel
+    assert "patch" in author_rel
+    assert "delete" in author_rel
+    assert "post" in books_rel
+
+    author_id = fastapi_client.get("/FastAuthors").json()["data"][0]["id"]
+    rel_items = fastapi_client.get(f"/FastAuthors/{author_id}/books").json()["data"]
+    rel_item_id = rel_items[0]["id"]
+    rel_item_response = fastapi_client.get(f"/FastAuthors/{author_id}/books/{rel_item_id}")
+    assert rel_item_response.status_code == 200
+    assert rel_item_response.json()["data"]["id"] == rel_item_id
+
+    author_patch_ref = author_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    books_patch_ref = books_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    books_post_ref = books_rel["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    books_delete_ref = books_rel["delete"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]["$ref"]
+    author_patch_example = author_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    books_patch_example = books_rel["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    books_post_example = books_rel["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    books_delete_example = books_rel["delete"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE].get("example")
+    assert author_patch_ref.endswith("/FastAuthorRelationshipDocumentToOne")
+    assert books_patch_ref.endswith("/FastBookRelationshipDocumentToMany")
+    assert books_post_ref.endswith("/FastBookRelationshipDocumentToMany")
+    assert books_delete_ref.endswith("/FastBookRelationshipDocumentToMany")
+    assert isinstance(author_patch_example, dict)
+    assert author_patch_example["data"]["type"] == "FastAuthor"
+    assert "id" in author_patch_example["data"]
+    assert isinstance(books_patch_example, dict)
+    assert isinstance(books_patch_example["data"], list)
+    assert books_patch_example["data"][0]["type"] == "FastBook"
+    assert "id" in books_patch_example["data"][0]
+    assert isinstance(books_post_example, dict)
+    assert isinstance(books_post_example["data"], list)
+    assert books_post_example["data"][0]["type"] == "FastBook"
+    assert "id" in books_post_example["data"][0]
+    assert isinstance(books_delete_example, dict)
+    assert isinstance(books_delete_example["data"], list)
+    assert books_delete_example["data"][0]["type"] == "FastBook"
+    assert "id" in books_delete_example["data"][0]
+
+
+def test_fastapi_openapi_examples_can_be_disabled() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        Session.add(FastThing(name="example-off", description="off"))
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app, include_examples_in_openapi=False)
+        api.expose_object(FastThing)
+
+        with TestClient(app) as client:
+            paths = client.get("/openapi.json").json()["paths"]
+            post_content = paths["/FastThings"]["post"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]
+            patch_content = paths["/FastThings/{object_id}"]["patch"]["requestBody"]["content"][JSONAPI_MEDIA_TYPE]
+            assert "example" not in post_content
+            assert "example" not in patch_content
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+@pytest.mark.parametrize(
+    ("mode", "expect_in_schema", "expect_status"),
+    [
+        (RelationshipItemMode.ENABLED, True, 200),
+        (RelationshipItemMode.HIDDEN, False, 200),
+        (RelationshipItemMode.DISABLED, False, 404),
+    ],
+)
+def test_fastapi_relationship_item_mode_controls_schema_and_runtime(
+    mode: RelationshipItemMode,
+    expect_in_schema: bool,
+    expect_status: int,
+) -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+    Base.metadata.create_all(engine)
+
+    try:
+        author = FastAuthor(name="mode-author")
+        book = FastBook(title="mode-book", author=author)
+        Session.add_all([author, book])
+        Session.commit()
+
+        app = FastAPI()
+        api = SafrsFastAPI(app, relationship_item_mode=mode)
+        api.expose_object(FastAuthor)
+        api.expose_object(FastBook)
+
+        with TestClient(app) as client:
+            item_path = "/FastAuthors/{object_id}/books/{target_id}"
+            paths = client.get("/openapi.json").json()["paths"]
+            assert (item_path in paths) is expect_in_schema
+            if mode == RelationshipItemMode.ENABLED and item_path in paths:
+                item_parameters = paths[item_path]["get"].get("parameters", [])
+                object_id_param = next(
+                    parameter
+                    for parameter in item_parameters
+                    if parameter.get("name") == "object_id" and parameter.get("in") == "path"
+                )
+                target_id_param = next(
+                    parameter
+                    for parameter in item_parameters
+                    if parameter.get("name") == "target_id" and parameter.get("in") == "path"
+                )
+                assert object_id_param["schema"].get("minLength") == 1
+                assert target_id_param["schema"].get("minLength") == 1
+
+            author_id = client.get("/FastAuthors").json()["data"][0]["id"]
+            rel_items = client.get(f"/FastAuthors/{author_id}/books").json()["data"]
+            rel_item_id = rel_items[0]["id"]
+            rel_item_response = client.get(f"/FastAuthors/{author_id}/books/{rel_item_id}")
+            assert rel_item_response.status_code == expect_status
+            if expect_status == 200:
+                assert rel_item_response.json()["data"]["id"] == rel_item_id
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
+def test_fastapi_openapi_jsonapi_query_params_documented(fastapi_client: TestClient) -> None:
+    response = fastapi_client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+
+    collection_get = paths["/FastThings"]["get"]
+    collection_params = _query_param_names(collection_get)
+    assert {"include", "fields[FastThing]", "page[offset]", "page[limit]", "sort", "filter"} <= collection_params
+    assert "filter[name]" in collection_params
+    assert "filter[description]" in collection_params
+
+    instance_get = paths["/FastThings/{object_id}"]["get"]
+    instance_params = _query_param_names(instance_get)
+    assert {"include", "fields[FastThing]"} <= instance_params
+
+    rel_get = paths["/FastAuthors/{object_id}/books"]["get"]
+    rel_params = _query_param_names(rel_get)
+    assert {"include", "fields[FastBook]", "page[offset]", "page[limit]", "sort", "filter"} <= rel_params
+    assert "filter[title]" in rel_params
+
+    post_collection = paths["/FastThings"]["post"]
+    post_params = _query_param_names(post_collection)
+    assert {"include", "fields[FastThing]"} <= post_params
+
+
+def test_fastapi_openapi_rpc_query_params_and_tags_documented(fastapi_client: TestClient) -> None:
+    response = fastapi_client.get("/openapi.json")
+    assert response.status_code == 200
+    spec = response.json()
+    paths = spec["paths"]
+
+    class_rpc_get = paths["/FastAuthors/lookup_by_name"]["get"]
+    class_rpc_get_params = _query_param_names(class_rpc_get)
+    assert "name" in class_rpc_get_params
+    assert "include" not in class_rpc_get_params
+    assert "varargs" not in class_rpc_get_params
+    assert "requestBody" not in class_rpc_get
+
+    class_rpc_post = paths["/FastAuthors/lookup_by_name"]["post"]
+    class_rpc_params = _query_param_names(class_rpc_post)
+    assert class_rpc_params == set()
+    post_schema = class_rpc_post["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]
+    meta_schema = post_schema["properties"]["meta"]
+    args_schema = meta_schema["properties"]["args"]
+    assert args_schema["properties"]["name"]["type"] == "string"
+
+    plain_rpc_post = paths["/FastAuthors/echo_plain"]["post"]
+    assert JSONAPI_MEDIA_TYPE not in plain_rpc_post["requestBody"]["content"]
+    plain_schema = plain_rpc_post["requestBody"]["content"]["application/json"]["schema"]
+    assert plain_schema["properties"]["message"]["type"] == "string"
+
+    tags = {str(tag.get("name")): str(tag.get("description", "")) for tag in spec.get("tags", [])}
+    assert "FastAuthors" in tags
+    assert tags["FastAuthors"]
+
+
+def test_fastapi_model_tag_description_uses_only_direct_model_docstring() -> None:
+    class BaseDoc:
+        """Base model doc that should not appear on child models."""
+
+    class NoDoc(BaseDoc):
+        pass
+
+    class WithDoc(BaseDoc):
+        """Concrete model doc."""
+
+    assert SafrsFastAPI._model_tag_description(NoDoc, "NoDocs") == "NoDocs operations"
+    assert SafrsFastAPI._model_tag_description(WithDoc, "WithDocs") == "Concrete model doc."
+
+
+def test_fastapi_uow_dependency_commit_and_rollback(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self) -> None:
+            calls["commit"] += 1
+
+        def rollback(self) -> None:
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    class NoCommitModel:
+        db_commit = False
+
+    post_dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(post_dep)
+    api._note_write(CommitModel)
+    with pytest.raises(StopIteration):
+        next(post_dep)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 0
+
+    post_no_commit_dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(post_no_commit_dep)
+    api._note_write(NoCommitModel)
+    with pytest.raises(StopIteration):
+        next(post_no_commit_dep)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+
+    get_dep = api._safrs_uow_dependency(_request_with_method("GET"))
+    next(get_dep)
+    with pytest.raises(StopIteration):
+        next(get_dep)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 2
+
+    error_dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(error_dep)
+    api._note_write(CommitModel)
+    with pytest.raises(RuntimeError):
+        error_dep.throw(RuntimeError("boom"))
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 3
+
+
+def test_fastapi_uow_dependency_rolls_back_on_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self) -> None:
+            calls["commit"] += 1
+
+        def rollback(self) -> None:
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(dep)
+    api._note_write(CommitModel)
+
+    with pytest.raises(RuntimeError):
+        dep.throw(RuntimeError("boom"))
+
+    assert calls["commit"] == 0
+    assert calls["rollback"] == 1
+
+
+def test_fastapi_uow_dependency_rolls_back_when_commit_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self) -> None:
+            calls["commit"] += 1
+            raise RuntimeError("commit failed")
+
+        def rollback(self) -> None:
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(dep)
+    tx.note_write(CommitModel)
+    with pytest.raises(RuntimeError):
+        next(dep)
+
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+
+
+def test_tx_note_write_updates_fastapi_uow_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app)
+    calls = {"commit": 0, "rollback": 0}
+
+    class Session:
+        def commit(self) -> None:
+            calls["commit"] += 1
+
+        def rollback(self) -> None:
+            calls["rollback"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+
+    class CommitModel:
+        db_commit = True
+
+    class NoCommitModel:
+        db_commit = False
+
+    dep = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(dep)
+    assert tx.in_request() is True
+    tx.note_write(CommitModel)
+    with pytest.raises(StopIteration):
+        next(dep)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 0
+    assert tx.in_request() is False
+
+    dep_no_commit = api._safrs_uow_dependency(_request_with_method("POST"))
+    next(dep_no_commit)
+    assert tx.in_request() is True
+    tx.note_write(NoCommitModel)
+    with pytest.raises(StopIteration):
+        next(dep_no_commit)
+    assert calls["commit"] == 1
+    assert calls["rollback"] == 1
+    assert tx.in_request() is False
+
+
+def test_fastapi_cleanup_session_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    api = SafrsFastAPI(app, cleanup_session=False)
+    calls = {"remove": 0}
+
+    class Session:
+        info: dict[str, Any] = {}
+
+        def rollback(self) -> None:
+            return None
+
+        def remove(self) -> None:
+            calls["remove"] += 1
+
+    monkeypatch.setattr(safrs, "DB", SimpleNamespace(session=Session()))
+    dep = api._safrs_uow_dependency(_request_with_method("GET"))
+    next(dep)
+    with pytest.raises(StopIteration):
+        next(dep)
+    assert calls["remove"] == 0
+
+
 def test_fastapi_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:
     response = fastapi_client.get("/FastBooks?include=invalid_rel")
     assert response.status_code == 400
@@ -233,6 +1063,67 @@ def test_fastapi_validation_errors_for_post_and_patch(fastapi_client: TestClient
     assert invalid_patch.json()["errors"][0]["detail"] == "Body id does not match path id"
 
 
+def test_fastapi_request_validation_error_returns_jsonapi_error_document(fastapi_client: TestClient) -> None:
+    invalid_body = fastapi_client.post("/FastThings", json=["not-a-jsonapi-object"])
+    assert invalid_body.status_code == 422
+    assert JSONAPI_MEDIA_TYPE in invalid_body.headers.get("content-type", "")
+    payload = invalid_body.json()
+    assert "errors" in payload
+    assert "detail" not in payload
+    assert payload["errors"][0]["status"] == "422"
+
+
+def test_fastapi_unhandled_runtime_exception_returns_jsonapi_error_document() -> None:
+    app = FastAPI()
+    install_jsonapi_exception_handlers(app)
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise RuntimeError("boom")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/boom")
+
+    assert response.status_code == 500
+    assert JSONAPI_MEDIA_TYPE in response.headers.get("content-type", "")
+    payload = response.json()
+    assert payload["errors"][0]["status"] == "500"
+    assert payload["errors"][0]["detail"] == "Internal Server Error"
+
+
+def test_fastapi_validation_error_pointer_and_parameter_mapping() -> None:
+    class _Attrs(BaseModel):
+        name: int
+
+    class _Data(BaseModel):
+        attributes: _Attrs
+
+    class _Payload(BaseModel):
+        data: _Data
+
+    app = FastAPI()
+    install_jsonapi_exception_handlers(app)
+
+    @app.post("/typed")
+    def typed(payload: _Payload) -> dict[str, bool]:
+        return {"ok": bool(payload.data.attributes.name)}
+
+    @app.get("/typed-query")
+    def typed_query(limit: int) -> dict[str, bool]:
+        return {"ok": bool(limit)}
+
+    with TestClient(app) as client:
+        invalid_payload = client.post("/typed", json={"data": {"attributes": {"name": "x"}}})
+        assert invalid_payload.status_code == 422
+        payload_errors = invalid_payload.json()["errors"]
+        assert payload_errors[0]["source"]["pointer"] == "/data/attributes/name"
+
+        invalid_query = client.get("/typed-query?limit=nope")
+        assert invalid_query.status_code == 422
+        query_errors = invalid_query.json()["errors"]
+        assert query_errors[0]["source"]["parameter"] == "limit"
+
+
 def test_fastapi_patch_supports_sparse_fields_and_include(fastapi_client: TestClient) -> None:
     response = fastapi_client.patch(
         "/FastBooks/1?include=author&fields[FastBook]=title",
@@ -282,6 +1173,56 @@ def test_fastapi_expose_object_dependencies_enforced() -> None:
         safrs.DB = original_db
 
 
+def test_fastapi_rpc_write_methods_use_write_dependencies() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+
+    class FastProtectedRPC(SAFRSBase, Base):
+        __tablename__ = "FastProtectedRPC"
+        decorators = [object()]
+
+        id = Column(Integer, primary_key=True)
+
+        @classmethod
+        @jsonapi_rpc(http_methods=["GET", "POST"])
+        def ping(cls, value: str = "") -> dict[str, Any]:
+            return {"meta": {"value": value}}
+
+    Base.metadata.create_all(engine)
+
+    try:
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastProtectedRPC)
+
+        with TestClient(app) as client:
+            route = f"/{FastProtectedRPC._s_collection_name}/ping"
+            get_response = client.get(route, params={"value": "ok"})
+            assert get_response.status_code == 200
+            assert get_response.json()["meta"]["value"] == "ok"
+
+            unauthorized = client.post(route, json={"meta": {"args": {"value": "blocked"}}})
+            assert unauthorized.status_code == 401
+
+            authorized = client.post(
+                route,
+                headers={"Authorization": "Basic dXNlcjpwYXNzd29yZA=="},
+                json={"meta": {"args": {"value": "allowed"}}},
+            )
+            assert authorized.status_code == 200
+            assert authorized.json()["meta"]["value"] == "allowed"
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
 def test_fastapi_delete_toone_relationship_is_idempotent(fastapi_client: TestClient) -> None:
     current_author = fastapi_client.get("/FastBooks/1/author")
     assert current_author.status_code == 200
@@ -325,7 +1266,10 @@ def test_fastapi_post_with_relationship_payload_returns_included(fastapi_client:
 
 
 def test_fastapi_rpc_routes_instance_class_and_duplicate(fastapi_client: TestClient) -> None:
-    instance_rpc = fastapi_client.post("/FastThings/1/prefix_name", json={"meta": {"args": {"prefix": "X-"}}})
+    instance_rpc = fastapi_client.post(
+        "/FastThings/1/prefix_name?prefix=ignored",
+        json={"meta": {"args": {"prefix": "X-"}}},
+    )
     assert instance_rpc.status_code == 200
     assert instance_rpc.json()["meta"]["value"] == "X-alpha"
 
@@ -333,11 +1277,42 @@ def test_fastapi_rpc_routes_instance_class_and_duplicate(fastapi_client: TestCli
     assert class_rpc.status_code == 200
     assert class_rpc.json()["meta"]["count"] >= 1
 
+    class_rpc_get = fastapi_client.get(
+        "/FastAuthors/lookup_by_name",
+        params={"name": "author-1", "fields[FastAuthor]": "name"},
+    )
+    assert class_rpc_get.status_code == 200
+    assert class_rpc_get.json()["meta"]["name"] == "author-1"
+
+    plain_rpc = fastapi_client.post("/FastAuthors/echo_plain", json={"message": "hello"})
+    assert plain_rpc.status_code == 200
+    assert plain_rpc.json() == {"message": "hello"}
+
     duplicate_rpc = fastapi_client.post("/FastAuthors/1/duplicate", json={})
     assert duplicate_rpc.status_code == 200
     payload = duplicate_rpc.json()
     assert payload["data"]["type"] == "FastAuthor"
     assert "id" in payload["data"]
+
+
+def test_fastapi_rpc_contract_shapes_and_validation(fastapi_client: TestClient) -> None:
+    resource_rpc = fastapi_client.get("/FastThings/resource_by_name", params={"name": "alpha"})
+    assert resource_rpc.status_code == 200
+    resource_payload = resource_rpc.json()
+    assert resource_payload["data"]["type"] == "FastThing"
+    assert resource_payload["data"]["attributes"]["name"] == "alpha"
+
+    scalar_rpc = fastapi_client.get("/FastThings/scalar_echo", params={"value": "hello"})
+    assert scalar_rpc.status_code == 200
+    assert scalar_rpc.json()["meta"]["result"] == "hello"
+
+    none_rpc = fastapi_client.get("/FastThings/return_none")
+    assert none_rpc.status_code == 200
+    assert none_rpc.json()["meta"] == {}
+
+    validation_rpc = fastapi_client.post("/FastThings/validate_name", json={"meta": {"args": {"name": ""}}})
+    assert validation_rpc.status_code == 400
+    assert validation_rpc.json()["errors"][0]["detail"] == "Validation Error: name is required"
 
 
 def test_fastapi_internal_helper_branches(monkeypatch: pytest.MonkeyPatch, fastapi_client: TestClient) -> None:
@@ -427,6 +1402,15 @@ def test_fastapi_internal_helper_branches(monkeypatch: pytest.MonkeyPatch, fasta
     assert api._apply_sort_query_or_items(BadSortModel, q, _request("sort=bad")) is q
 
 
+def test_fastapi_schema_registry_respects_relationship_toggle() -> None:
+    from safrs.fastapi.schemas.registry import SchemaRegistry
+
+    registry = SchemaRegistry(document_relationships=False)
+    resource_model = registry.resource(FastBook)
+    schema = resource_model.model_json_schema()
+    assert "relationships" not in schema["properties"]
+
+
 def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> None:
     api = fastapi_client.app.state.safrs_api
 
@@ -449,8 +1433,10 @@ def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> 
         api._handle_safrs_exception(SystemValidationError("server side validation"))
     assert system_exc.value.status_code == 400
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as runtime_exc:
         api._handle_safrs_exception(RuntimeError("boom"))
+    assert runtime_exc.value.status_code == 500
+    assert runtime_exc.value.payload["errors"][0]["detail"] == "Internal Server Error"
 
     class ModelValidation:
         @staticmethod
@@ -473,8 +1459,9 @@ def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> 
         def filter(_raw: str) -> Any:
             raise RuntimeError("broken")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as model_runtime_exc:
         api._apply_filter(ModelRuntime, _request("filter=x"), [])
+    assert model_runtime_exc.value.status_code == 500
 
     class ModelSFilter:
         @staticmethod
@@ -544,6 +1531,147 @@ def test_fastapi_internal_error_and_lookup_paths(fastapi_client: TestClient) -> 
     assert encoded["attributes"]["name"] is None
 
 
+def test_fastapi_maps_sqlalchemy_errors_to_jsonapi_errors_with_rollback(fastapi_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    api = fastapi_client.app.state.safrs_api
+    rollback_calls = {"count": 0}
+
+    def fake_rollback() -> None:
+        rollback_calls["count"] += 1
+
+    monkeypatch.setattr(safrs.DB.session, "rollback", fake_rollback)
+
+    cases = [
+        (IntegrityError("stmt", {}, Exception("orig")), 409, "Database constraint violation"),
+        (DataError("stmt", {}, Exception("orig")), 400, "Invalid attribute value"),
+        (StatementError("msg", "stmt", {}, Exception("orig")), 400, "Invalid attribute value"),
+        (OverflowError("too big"), 400, "Invalid attribute value"),
+        (
+            CircularDependencyError("cycle", [], []),
+            409,
+            "Relationship update creates a circular dependency",
+        ),
+        (FlushError("flush failed"), 409, "Relationship update violates DB constraints"),
+        (InvalidRequestError("invalid request"), 409, "Relationship update violates DB constraints"),
+    ]
+
+    for error, expected_status, expected_detail in cases:
+        with pytest.raises(JSONAPIHTTPError) as exc_info:
+            api._handle_safrs_exception(error)
+        assert exc_info.value.status_code == expected_status
+        assert exc_info.value.payload["errors"][0]["detail"] == expected_detail
+
+    assert rollback_calls["count"] == len(cases)
+
+
+def test_fastapi_logs_integrity_error_diagnostics_at_debug(fastapi_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    api = fastapi_client.app.state.safrs_api
+    debug_calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+
+    monkeypatch.setattr(safrs.log, "isEnabledFor", lambda _level: True)
+    monkeypatch.setattr(safrs.DB.session, "rollback", lambda: None)
+
+    def fake_debug(message: Any, *args: Any, **kwargs: Any) -> None:
+        debug_calls.append((message, args, kwargs))
+
+    monkeypatch.setattr(safrs.log, "debug", fake_debug)
+
+    token = set_fastapi_request_url("http://testserver/api/Order/10835")
+    try:
+        with pytest.raises(JSONAPIHTTPError):
+            api._handle_safrs_exception(
+                IntegrityError(
+                    "DELETE FROM order WHERE id=:id",
+                    {"id": 10835},
+                    Exception("constraint failed"),
+                )
+            )
+    finally:
+        reset_fastapi_request_url(token)
+
+    assert debug_calls
+    _, debug_args, _ = debug_calls[-1]
+    assert debug_args[0] == "http://testserver/api/Order/10835"
+    assert debug_args[1] == "Order"
+    assert debug_args[2] == "10835"
+    assert "constraint failed" in repr(debug_args[3])
+    assert debug_args[4] == "DELETE FROM order WHERE id=:id"
+    assert debug_args[5] == {"id": 10835}
+
+
+def test_generic_error_debug_mode_works_without_flask_request_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("safrs.errors.is_debug", lambda: True)
+    err = GenericError("boom")
+    assert "boom" in err.message
+
+
+def test_fastapi_build_post_response_sets_prefixed_quoted_location_header() -> None:
+    api = SafrsFastAPI(FastAPI(), prefix="/api")
+
+    class LocationModel:
+        _s_type = "LocationModel"
+        _s_collection_name = "LocationModels"
+        _s_jsonapi_attrs: dict[str, Any] = {}
+
+    created = [SimpleNamespace(jsonapi_id="ümlaut/space here")]
+    response = api._build_post_response(LocationModel, created, wanted_fields=None, include_paths=[], included=[])
+    assert response.status_code == 201
+    assert response.headers["location"] == f"/api/LocationModels/{quote('ümlaut/space here', safe='')}"
+
+
+def test_fastapi_rpc_request_context_parses_query_string() -> None:
+    request = _request("fields[FastBook]=&page[offset]=1")
+    with SafrsFastAPI._rpc_request_context(request):
+        from flask import request as flask_request
+
+        assert flask_request.args.get("fields[FastBook]") == ""
+        assert flask_request.args.get("page[offset]") == "1"
+
+
+def test_fastapi_rpc_request_context_supports_multi_value_query_params() -> None:
+    request = _request("x=1&x=2&limit=3")
+    with SafrsFastAPI._rpc_request_context(request):
+        from flask import request as flask_request
+
+        assert flask_request.args.getlist("x") == ["1", "2"]
+        assert flask_request.args.get("limit") == "3"
+
+
+def test_fastapi_remove_relationship_item_missing_member_is_noop(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+    rel_value = [1]
+
+    api._remove_relationship_item(rel_value, 2)
+    assert rel_value == [1]
+
+    api._remove_relationship_item(rel_value, 1)
+    assert rel_value == []
+
+
+def test_fastapi_encode_resource_temporal_values_use_rfc3339(fastapi_client: TestClient) -> None:
+    api = fastapi_client.app.state.safrs_api
+
+    class TemporalModel:
+        _s_type = "TemporalModel"
+        _s_jsonapi_attrs = {
+            "created": object(),
+            "published_on": object(),
+            "published_at": object(),
+        }
+
+    class TemporalObj:
+        jsonapi_id = 1
+        created = dt.datetime(2026, 2, 21, 14, 3, 16, 394973)
+        published_on = dt.date(2026, 2, 21)
+        published_at = dt.time(0, 0, 0)
+
+    encoded = api._encode_resource(TemporalModel, TemporalObj())
+    attrs = encoded["attributes"]
+
+    assert attrs["created"] == "2026-02-21T14:03:16.394973+00:00"
+    assert attrs["published_on"] == "2026-02-21"
+    assert attrs["published_at"] == "00:00:00+00:00"
+
+
 def test_fastapi_relationship_handler_branch_errors(fastapi_client: TestClient) -> None:
     api = fastapi_client.app.state.safrs_api
     req = _request("")
@@ -589,9 +1717,22 @@ def test_fastapi_rpc_and_encoding_internal_branches(fastapi_client: TestClient) 
         ("static_method", True, ["GET"]),
     ]
 
-    parsed_args = api._parse_rpc_args(_request("x=query&y=2"), {"meta": {"args": {"x": "meta"}}})
+    parsed_args = api._parse_rpc_args(
+        _request_with_method("POST", "x=query&y=2"),
+        {"meta": {"args": {"x": "meta"}}},
+    )
     assert parsed_args["x"] == "meta"
-    assert parsed_args["y"] == "2"
+    assert "y" not in parsed_args
+
+    parsed_null_payload_args = api._parse_rpc_args(_request("only=query"), None)
+    assert parsed_null_payload_args == {"only": "query"}
+
+    parsed_plain_args = api._parse_rpc_args(
+        _request_with_method("POST", "message=query"),
+        {"message": "body"},
+        valid_jsonapi=False,
+    )
+    assert parsed_plain_args == {"message": "body"}
 
     assert api._encode_rpc_value(None) is None
     assert api._encode_rpc_value({"type": "FastThing", "id": "1"}) == {"type": "FastThing", "id": "1"}
@@ -611,6 +1752,7 @@ def test_fastapi_rpc_and_encoding_internal_branches(fastapi_client: TestClient) 
     assert isinstance(encoded_list["data"], list)
     assert api._normalize_rpc_result(FastThing, None)["meta"] == {}
     assert api._normalize_rpc_result(FastThing, 7)["meta"]["result"] == 7
+    assert api._normalize_rpc_result(FastThing, {"raw": 1}, valid_jsonapi=False) == {"raw": 1}
 
 
 def test_fastapi_rpc_handler_exception_branches(fastapi_client: TestClient) -> None:
@@ -639,21 +1781,105 @@ def test_fastapi_rpc_handler_exception_branches(fastapi_client: TestClient) -> N
 
             return Instance()
 
-    class_handler_jsonapi = api._rpc_handler(ClassRPCModel, "raise_jsonapi", True)
+    class_handler_jsonapi = api._rpc_handler(ClassRPCModel, "raise_jsonapi", True, "POST")
     with pytest.raises(JSONAPIHTTPError):
         class_handler_jsonapi(_request(""), None)
 
-    class_handler_runtime = api._rpc_handler(ClassRPCModel, "raise_runtime", True)
-    with pytest.raises(RuntimeError):
+    class_handler_runtime = api._rpc_handler(ClassRPCModel, "raise_runtime", True, "POST")
+    with pytest.raises(JSONAPIHTTPError) as class_runtime_exc:
         class_handler_runtime(_request(""), None)
+    assert class_runtime_exc.value.status_code == 500
 
-    instance_handler_jsonapi = api._rpc_handler(InstanceRPCModel, "raise_jsonapi", False)
+    instance_handler_jsonapi = api._rpc_handler(InstanceRPCModel, "raise_jsonapi", False, "POST")
     with pytest.raises(JSONAPIHTTPError):
         instance_handler_jsonapi("1", _request(""), None)
 
-    instance_handler_runtime = api._rpc_handler(InstanceRPCModel, "raise_runtime", False)
-    with pytest.raises(RuntimeError):
+    instance_handler_runtime = api._rpc_handler(InstanceRPCModel, "raise_runtime", False, "POST")
+    with pytest.raises(JSONAPIHTTPError) as instance_runtime_exc:
         instance_handler_runtime("1", _request(""), None)
+    assert instance_runtime_exc.value.status_code == 500
+
+
+def test_fastapi_rpc_handler_selects_get_and_write_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    fastapi_client: TestClient,
+) -> None:
+    api = fastapi_client.app.state.safrs_api
+    calls: list[dict[str, Any]] = []
+
+    def fake_dispatch(
+        Model: Any,
+        method_name: str,
+        request: Request,
+        *,
+        class_level: bool,
+        payload: Any = None,
+        object_id: Any = None,
+    ) -> JSONAPIResponse:
+        calls.append(
+            {
+                "model": Model,
+                "method_name": method_name,
+                "http_method": request.method,
+                "class_level": class_level,
+                "payload": payload,
+                "object_id": object_id,
+            }
+        )
+        return JSONAPIResponse(status_code=200, content={"meta": {"ok": True}})
+
+    monkeypatch.setattr(api, "_dispatch_rpc_call", fake_dispatch)
+
+    class_get_handler = api._rpc_handler(FastThing, "prefix_name", True, "GET")
+    class_get_response = class_get_handler(_request())
+    assert class_get_response.status_code == 200
+
+    class_post_handler = api._rpc_handler(FastThing, "prefix_name", True, "POST")
+    class_post_response = class_post_handler(_request_with_method("POST"), {"meta": {"args": {"x": 1}}})
+    assert class_post_response.status_code == 200
+
+    instance_get_handler = api._rpc_handler(FastThing, "prefix_name", False, "GET")
+    instance_get_response = instance_get_handler("7", _request())
+    assert instance_get_response.status_code == 200
+
+    instance_post_handler = api._rpc_handler(FastThing, "prefix_name", False, "POST")
+    instance_post_response = instance_post_handler("9", _request_with_method("POST"), {"meta": {"args": {"y": 2}}})
+    assert instance_post_response.status_code == 200
+
+    assert calls == [
+        {
+            "model": FastThing,
+            "method_name": "prefix_name",
+            "http_method": "GET",
+            "class_level": True,
+            "payload": None,
+            "object_id": None,
+        },
+        {
+            "model": FastThing,
+            "method_name": "prefix_name",
+            "http_method": "POST",
+            "class_level": True,
+            "payload": {"meta": {"args": {"x": 1}}},
+            "object_id": None,
+        },
+        {
+            "model": FastThing,
+            "method_name": "prefix_name",
+            "http_method": "GET",
+            "class_level": False,
+            "payload": None,
+            "object_id": "7",
+        },
+        {
+            "model": FastThing,
+            "method_name": "prefix_name",
+            "http_method": "POST",
+            "class_level": False,
+            "payload": {"meta": {"args": {"y": 2}}},
+            "object_id": "9",
+        },
+    ]
 
 
 def test_fastapi_internal_parse_and_instance_error_branches(monkeypatch: pytest.MonkeyPatch, fastapi_client: TestClient) -> None:
@@ -683,7 +1909,7 @@ def test_fastapi_internal_parse_and_instance_error_branches(monkeypatch: pytest.
     assert any(item["type"] == "FastBook" for item in included)
     assert any(item["type"] == "FastAuthor" for item in included)
 
-    inst = api._get_instance(FastAuthor)(str(author.id), _request("include=books"))
+    inst = _json_payload(api._get_instance(FastAuthor)(str(author.id), _request("include=books")))
     assert "included" in inst
 
     class BrokenModel:
@@ -693,8 +1919,9 @@ def test_fastapi_internal_parse_and_instance_error_branches(monkeypatch: pytest.
         def get_instance(_object_id: str) -> Any:
             raise RuntimeError("broken get_instance")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as broken_instance_exc:
         api._get_instance(BrokenModel)("1", _request(""))
+    assert broken_instance_exc.value.status_code == 500
 
 
 def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_client: TestClient) -> None:
@@ -724,11 +1951,12 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         def _s_post(cls, **_kwargs: Any) -> Any:
             raise RuntimeError("post boom")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as post_runtime_exc:
         api._post_collection(BrokenPostModel)(
             _request(""),
             {"data": {"type": "PostDummyModel", "attributes": {"name": "x"}}},
         )
+    assert post_runtime_exc.value.status_code == 500
 
     class BrokenPatchModel:
         _s_type = "BrokenPatchModel"
@@ -738,12 +1966,13 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         def get_instance(_object_id: str) -> Any:
             raise RuntimeError("patch boom")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as patch_runtime_exc:
         api._patch_instance(BrokenPatchModel)(
             "1",
             _request(""),
             {"data": {"type": "BrokenPatchModel", "attributes": {"name": "x"}}},
         )
+    assert patch_runtime_exc.value.status_code == 500
 
     class DeleteOKModel:
         @staticmethod
@@ -758,8 +1987,9 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         def get_instance(_object_id: str) -> Any:
             raise RuntimeError("delete boom")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(JSONAPIHTTPError) as delete_runtime_exc:
         api._delete_instance(DeleteBrokenModel)("1")
+    assert delete_runtime_exc.value.status_code == 500
 
     class DeleteJSONAPIModel:
         @staticmethod
@@ -769,16 +1999,16 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
     with pytest.raises(JSONAPIHTTPError):
         api._delete_instance(DeleteJSONAPIModel)("1")
 
-    rel_item = api._get_relationship_item(FastAuthor, "books")(str(author1.id), str(book_one.id), _request(""))
+    rel_item = _json_payload(api._get_relationship_item(FastAuthor, "books")(str(author1.id), str(book_one.id), _request("")))
     assert rel_item["data"]["id"] == str(book_one.id)
 
     with pytest.raises(JSONAPIHTTPError):
         api._get_relationship_item(FastBook, "unknown_rel")("1", "1", _request(""))
 
-    patched_many = api._patch_relationship(FastAuthor, "books")(
+    patched_many = _json_payload(api._patch_relationship(FastAuthor, "books")(
         str(author1.id),
         {"data": [{"type": "FastBook", "id": str(book_other.id)}]},
-    )
+    ))
     assert patched_many["meta"]["count"] == 1
 
     patched_toone_none = api._patch_relationship(FastBook, "author")(str(book_other.id), {"data": None})
@@ -788,6 +2018,11 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         {"data": {"type": "FastAuthor", "id": str(author2.id)}},
     )
     assert patched_toone_set.status_code == 204
+
+    with pytest.raises(JSONAPIHTTPError) as missing_data_exc:
+        api._patch_relationship(FastBook, "author")(str(book_other.id), {})
+    assert missing_data_exc.value.status_code == 400
+    assert "Missing 'data' member" in missing_data_exc.value.payload["errors"][0]["detail"]
 
     with pytest.raises(JSONAPIHTTPError):
         api._patch_relationship(FastBook, "unknown_rel")("1", {"data": None})
@@ -799,10 +2034,10 @@ def test_fastapi_post_patch_delete_and_relationship_success_branches(fastapi_cli
         {"data": [{"type": "FastBook", "id": str(book_other.id)}]},
     )
     assert posted_many.status_code == 204
-    posted_toone = api._post_relationship(FastBook, "author")(
+    posted_toone = _json_payload(api._post_relationship(FastBook, "author")(
         str(book_other.id),
         {"data": {"type": "FastAuthor", "id": str(author1.id)}},
-    )
+    ))
     assert posted_toone["data"]["type"] == "FastAuthor"
 
     with pytest.raises(JSONAPIHTTPError):
