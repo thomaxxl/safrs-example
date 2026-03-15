@@ -312,9 +312,11 @@ class UserWithJsonapiAttr(SAFRSBase, db.Model):
     """
 
     __tablename__ = "UsersWithJsonapiAttr"
+    exclude_attrs = ["secret_store"]
     id = db.Column(db.String, primary_key=True)
     name = db.Column(db.String)
     email = db.Column(db.String)
+    secret_store = db.Column(db.String, default="")
     
     @jsonapi_attr
     def some_attr(self):
@@ -322,8 +324,39 @@ class UserWithJsonapiAttr(SAFRSBase, db.Model):
     
     @some_attr.setter
     def some_attr(self, val):
-        print("some_attr setter value:", val)
         self.name = val
+
+    @jsonapi_attr(
+        read_only=True,
+        description="Computed summary derived from the current name",
+        default="summary:jsonapi-attr-name",
+    )
+    def readonly_value(self):
+        current_name = self.name or "anonymous"
+        return f"summary:{current_name}"
+
+    @jsonapi_attr(
+        description="Write-only secret input",
+        default="example-secret",
+        swagger_format="password",
+        write_only=True,
+    )
+    def secret(self):
+        return "********"
+
+    @secret.setter
+    def secret(self, val):
+        self.secret_store = hashlib.sha256(val.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _s_sample_dict():
+        return {
+            "name": "jsonapi-attr-name",
+            "email": "jsonapi@example.com",
+            "some_attr": "via-jsonapi-attr",
+            "readonly_value": "summary:jsonapi-attr-name",
+            "secret": "example-secret",
+        }
 
 from sqlalchemy.ext.hybrid import hybrid_method
 class UserWithPerms(SAFRSBase, db.Model):
@@ -340,4 +373,3 @@ class UserWithPerms(SAFRSBase, db.Model):
     def _s_check_perm(self, property_name, permission="r"):
         if property_name == "email":
             return False
-
