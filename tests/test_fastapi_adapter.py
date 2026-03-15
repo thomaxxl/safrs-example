@@ -1758,6 +1758,88 @@ def test_fastapi_rpc_handler_exception_branches(fastapi_client: TestClient) -> N
     assert instance_runtime_exc.value.status_code == 500
 
 
+def test_fastapi_rpc_handler_selects_get_and_write_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    fastapi_client: TestClient,
+) -> None:
+    api = fastapi_client.app.state.safrs_api
+    calls: list[dict[str, Any]] = []
+
+    def fake_dispatch(
+        Model: Any,
+        method_name: str,
+        request: Request,
+        *,
+        class_level: bool,
+        payload: Any = None,
+        object_id: Any = None,
+    ) -> JSONAPIResponse:
+        calls.append(
+            {
+                "model": Model,
+                "method_name": method_name,
+                "http_method": request.method,
+                "class_level": class_level,
+                "payload": payload,
+                "object_id": object_id,
+            }
+        )
+        return JSONAPIResponse(status_code=200, content={"meta": {"ok": True}})
+
+    monkeypatch.setattr(api, "_dispatch_rpc_call", fake_dispatch)
+
+    class_get_handler = api._rpc_handler(FastThing, "prefix_name", True, "GET")
+    class_get_response = class_get_handler(_request())
+    assert class_get_response.status_code == 200
+
+    class_post_handler = api._rpc_handler(FastThing, "prefix_name", True, "POST")
+    class_post_response = class_post_handler(_request_with_method("POST"), {"meta": {"args": {"x": 1}}})
+    assert class_post_response.status_code == 200
+
+    instance_get_handler = api._rpc_handler(FastThing, "prefix_name", False, "GET")
+    instance_get_response = instance_get_handler("7", _request())
+    assert instance_get_response.status_code == 200
+
+    instance_post_handler = api._rpc_handler(FastThing, "prefix_name", False, "POST")
+    instance_post_response = instance_post_handler("9", _request_with_method("POST"), {"meta": {"args": {"y": 2}}})
+    assert instance_post_response.status_code == 200
+
+    assert calls == [
+        {
+            "model": FastThing,
+            "method_name": "prefix_name",
+            "http_method": "GET",
+            "class_level": True,
+            "payload": None,
+            "object_id": None,
+        },
+        {
+            "model": FastThing,
+            "method_name": "prefix_name",
+            "http_method": "POST",
+            "class_level": True,
+            "payload": {"meta": {"args": {"x": 1}}},
+            "object_id": None,
+        },
+        {
+            "model": FastThing,
+            "method_name": "prefix_name",
+            "http_method": "GET",
+            "class_level": False,
+            "payload": None,
+            "object_id": "7",
+        },
+        {
+            "model": FastThing,
+            "method_name": "prefix_name",
+            "http_method": "POST",
+            "class_level": False,
+            "payload": {"meta": {"args": {"y": 2}}},
+            "object_id": "9",
+        },
+    ]
+
+
 def test_fastapi_internal_parse_and_instance_error_branches(monkeypatch: pytest.MonkeyPatch, fastapi_client: TestClient) -> None:
     api = fastapi_client.app.state.safrs_api
 
