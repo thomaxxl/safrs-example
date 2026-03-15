@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from flask import g
 import safrs
 import safrs.base as safrs_base
+from safrs import jsonapi_rpc
 from sqlalchemy.exc import InvalidRequestError
 
 from app import models
@@ -136,7 +137,7 @@ def test_get_related_branches(app, api, db_session, monkeypatch):
     with app.test_request_context("/?include=books&exclude=books"):
         g.ja_included = set()
         g.ja_data = set()
-        rels = pub._s_get_related()
+        rels = db_session.get(models.Publisher, pub.id)._s_get_related()
         assert "books" in rels
 
     orig_get_config = safrs_base.get_config
@@ -149,7 +150,7 @@ def test_get_related_branches(app, api, db_session, monkeypatch):
     with app.test_request_context("/?include=books"):
         g.ja_included = set()
         g.ja_data = set()
-        rels = pub._s_get_related()
+        rels = db_session.get(models.Publisher, pub.id)._s_get_related()
         assert "warning" in rels["books"].get("meta", {})
 
     monkeypatch.setattr(
@@ -160,8 +161,26 @@ def test_get_related_branches(app, api, db_session, monkeypatch):
     with app.test_request_context("/?include=books"):
         g.ja_included = set()
         g.ja_data = set()
-        rels = pub._s_get_related()
+        rels = db_session.get(models.Publisher, pub.id)._s_get_related()
         assert "warning" in rels["books"].get("meta", {})
+
+
+def test_get_jsonapi_rpc_methods_uses_static_member_lookup() -> None:
+    class ExplodingDescriptor:
+        def __get__(self, instance, owner=None):
+            raise RuntimeError("descriptor should not be evaluated during rpc discovery")
+
+    class RpcProbe:
+        exploding = ExplodingDescriptor()
+
+        @classmethod
+        @jsonapi_rpc(http_methods=["POST"])
+        def ping(cls):
+            return None
+
+    methods = safrs_base.SAFRSBase._s_get_jsonapi_rpc_methods.__func__(RpcProbe)
+
+    assert [method.__name__ for method in methods] == ["ping"]
 
 
 def test_count_and_sample_id_and_sample_dict(monkeypatch):
@@ -213,10 +232,10 @@ def test_count_and_sample_id_and_sample_dict(monkeypatch):
 
 
 def test_rpc_methods_s_url_type_setter_and_in_filter(monkeypatch, db_session):
-    def boom_getmembers(*_a, **_k):
+    def boom_getattr_static(*_a, **_k):
         raise InvalidRequestError("boom")
 
-    monkeypatch.setattr(safrs_base.inspect, "getmembers", boom_getmembers)
+    monkeypatch.setattr(safrs_base.inspect, "getattr_static", boom_getattr_static)
     assert models.Thing._s_get_jsonapi_rpc_methods() == []
 
     thing = models.Thing(name="url-thing", description="d")

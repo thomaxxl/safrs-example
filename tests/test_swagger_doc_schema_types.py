@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from sqlalchemy import BigInteger, Column, Integer
 
+from safrs import jsonapi_rpc
 from safrs.swagger_doc import _column_schema, _ensure_not_found_response, _is_class_level_rpc_method, schema_from_object, update_response_schema
 
 
@@ -83,6 +84,26 @@ def test_is_class_level_rpc_method_detection() -> None:
     assert _is_class_level_rpc_method(Sample, "instance_method") is False
     assert _is_class_level_rpc_method(Sample, "class_method") is True
     assert _is_class_level_rpc_method(Sample, "static_method") is True
+
+
+def test_find_method_on_class_uses_static_lookup() -> None:
+    from safrs.swagger_doc import _find_method_on_class
+
+    class ExplodingDescriptor:
+        def __get__(self, instance: Any, owner: Any = None) -> Any:
+            raise RuntimeError("descriptor should not be evaluated during swagger rpc lookup")
+
+    class Sample:
+        exploding = ExplodingDescriptor()
+
+        @classmethod
+        @jsonapi_rpc(http_methods=["POST"])
+        def rpc(cls) -> None:
+            return None
+
+    method = _find_method_on_class(Sample, "rpc")
+
+    assert method.__name__ == "rpc"
 
 
 def _canonical_path(path: str) -> str:
