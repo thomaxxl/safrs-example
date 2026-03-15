@@ -423,4 +423,7 @@ def test_jsonrpc_create_response_non_jsonapi_and_default_meta(app):
 
         default_resp = rpc_api._create_rpc_response(default_method, {})
         assert default_resp.status_code == 200
-        assert default_resp.get_json() == {"meta": {"result": 42}}
+        assert default_resp.get_json() == {
+            "jsonapi": {"version": "1.0"},
+            "meta": {"result": 42},
+        }

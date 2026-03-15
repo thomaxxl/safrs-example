@@ -6,7 +6,14 @@ import pytest
 from sqlalchemy import BigInteger, Column, Integer
 
 from safrs import jsonapi_rpc
-from safrs.swagger_doc import _column_schema, _ensure_not_found_response, _is_class_level_rpc_method, schema_from_object, update_response_schema
+from safrs.swagger_doc import (
+    _append_filterable_parameters,
+    _column_schema,
+    _ensure_not_found_response,
+    _is_class_level_rpc_method,
+    schema_from_object,
+    update_response_schema,
+)
 
 
 def test_schema_from_object_types_dict_and_array(app):
@@ -66,6 +73,15 @@ def test_ensure_not_found_response_adds_default_once() -> None:
     _ensure_not_found_response(responses)
     _ensure_not_found_response(responses)
     assert responses == {"404": {"description": HTTPStatus.NOT_FOUND.description}}
+
+
+def test_append_filterable_parameters_adds_parameter_dicts() -> None:
+    class Filterable:
+        _s_column_dict = {"name": Column("name", Integer)}
+
+    parameters: list[dict[str, Any]] = []
+    _append_filterable_parameters(Filterable, parameters, "")
+    assert parameters[0]["name"] == "filter[name]"
 
 
 def test_is_class_level_rpc_method_detection() -> None:
@@ -241,3 +257,26 @@ def test_swagger_rpc_not_found_response_is_documented_for_instance_methods_only(
 
     assert "404" in send_mail_post["responses"]
     assert "404" not in my_rpc_post["responses"]
+
+
+def test_swagger_rpc_get_does_not_advertise_fake_varargs(client):
+    spec = client.get("/swagger.json").get_json()
+    if spec.get("swagger") != "2.0":
+        pytest.skip("Swagger 2.0 contract checks apply to Flask swagger output only")
+
+    paths = spec["paths"]
+    by_canonical = {_canonical_path(path): ops for path, ops in paths.items()}
+    my_rpc_get = by_canonical["/People/my_rpc"]["get"]
+    query_params = {param["name"] for param in my_rpc_get["parameters"] if param.get("in") == "query"}
+    assert "varargs" not in query_params
+
+
+def test_swagger_rpc_success_response_schema_is_present(client):
+    spec = client.get("/swagger.json").get_json()
+    if spec.get("swagger") != "2.0":
+        pytest.skip("Swagger 2.0 contract checks apply to Flask swagger output only")
+
+    paths = spec["paths"]
+    by_canonical = {_canonical_path(path): ops for path, ops in paths.items()}
+    my_rpc_post = by_canonical["/People/my_rpc"]["post"]
+    assert "schema" in my_rpc_post["responses"]["200"]

@@ -204,6 +204,16 @@ class Person(BaseModel):
 
         return response
 
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"], valid_jsonapi=False)
+    def echo_plain(cls, message=""):
+        """
+            description: Echo a plain JSON RPC payload
+            args:
+                message: hello
+        """
+        return {"message": message}
+
 
 class Publisher(BaseModel):
     """

@@ -58,9 +58,14 @@ class FastAuthor(SAFRSBase, Base):
     duplicate = duplicate
 
     @classmethod
-    @jsonapi_rpc(http_methods=["POST"])
+    @jsonapi_rpc(http_methods=["POST", "GET"])
     def lookup_by_name(cls, name: str = "") -> dict[str, Any]:
         return {"meta": {"name": name, "count": cls.query.filter_by(name=name).count()}}
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"], valid_jsonapi=False)
+    def echo_plain(cls, message: str = "") -> dict[str, Any]:
+        return {"message": message}
 
 
 class FastBook(SAFRSBase, Base):
@@ -756,9 +761,25 @@ def test_fastapi_openapi_rpc_query_params_and_tags_documented(fastapi_client: Te
     spec = response.json()
     paths = spec["paths"]
 
+    class_rpc_get = paths["/FastAuthors/lookup_by_name"]["get"]
+    class_rpc_get_params = _query_param_names(class_rpc_get)
+    assert "name" in class_rpc_get_params
+    assert "include" not in class_rpc_get_params
+    assert "varargs" not in class_rpc_get_params
+    assert "requestBody" not in class_rpc_get
+
     class_rpc_post = paths["/FastAuthors/lookup_by_name"]["post"]
     class_rpc_params = _query_param_names(class_rpc_post)
-    assert {"include", "fields[FastAuthor]", "page[offset]", "page[limit]"} <= class_rpc_params
+    assert class_rpc_params == set()
+    post_schema = class_rpc_post["requestBody"]["content"][JSONAPI_MEDIA_TYPE]["schema"]
+    meta_schema = post_schema["properties"]["meta"]
+    args_schema = meta_schema["properties"]["args"]
+    assert args_schema["properties"]["name"]["type"] == "string"
+
+    plain_rpc_post = paths["/FastAuthors/echo_plain"]["post"]
+    assert JSONAPI_MEDIA_TYPE not in plain_rpc_post["requestBody"]["content"]
+    plain_schema = plain_rpc_post["requestBody"]["content"]["application/json"]["schema"]
+    assert plain_schema["properties"]["message"]["type"] == "string"
 
     tags = {str(tag.get("name")): str(tag.get("description", "")) for tag in spec.get("tags", [])}
     assert "FastAuthors" in tags
@@ -1130,6 +1151,56 @@ def test_fastapi_expose_object_dependencies_enforced() -> None:
         safrs.DB = original_db
 
 
+def test_fastapi_rpc_write_methods_use_write_dependencies() -> None:
+    original_db = safrs.DB
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Session = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+    safrs.DB = _SAFRSDBWrapper(Session, Base)
+
+    class FastProtectedRPC(SAFRSBase, Base):
+        __tablename__ = "FastProtectedRPC"
+        decorators = [object()]
+
+        id = Column(Integer, primary_key=True)
+
+        @classmethod
+        @jsonapi_rpc(http_methods=["GET", "POST"])
+        def ping(cls, value: str = "") -> dict[str, Any]:
+            return {"meta": {"value": value}}
+
+    Base.metadata.create_all(engine)
+
+    try:
+        app = FastAPI()
+        api = SafrsFastAPI(app)
+        api.expose_object(FastProtectedRPC)
+
+        with TestClient(app) as client:
+            route = f"/{FastProtectedRPC._s_collection_name}/ping"
+            get_response = client.get(route, params={"value": "ok"})
+            assert get_response.status_code == 200
+            assert get_response.json()["meta"]["value"] == "ok"
+
+            unauthorized = client.post(route, json={"meta": {"args": {"value": "blocked"}}})
+            assert unauthorized.status_code == 401
+
+            authorized = client.post(
+                route,
+                headers={"Authorization": "Basic dXNlcjpwYXNzd29yZA=="},
+                json={"meta": {"args": {"value": "allowed"}}},
+            )
+            assert authorized.status_code == 200
+            assert authorized.json()["meta"]["value"] == "allowed"
+    finally:
+        Session.remove()
+        Base.metadata.drop_all(engine)
+        safrs.DB = original_db
+
+
 def test_fastapi_delete_toone_relationship_is_idempotent(fastapi_client: TestClient) -> None:
     current_author = fastapi_client.get("/FastBooks/1/author")
     assert current_author.status_code == 200
@@ -1173,13 +1244,27 @@ def test_fastapi_post_with_relationship_payload_returns_included(fastapi_client:
 
 
 def test_fastapi_rpc_routes_instance_class_and_duplicate(fastapi_client: TestClient) -> None:
-    instance_rpc = fastapi_client.post("/FastThings/1/prefix_name", json={"meta": {"args": {"prefix": "X-"}}})
+    instance_rpc = fastapi_client.post(
+        "/FastThings/1/prefix_name?prefix=ignored",
+        json={"meta": {"args": {"prefix": "X-"}}},
+    )
     assert instance_rpc.status_code == 200
     assert instance_rpc.json()["meta"]["value"] == "X-alpha"
 
     class_rpc = fastapi_client.post("/FastAuthors/lookup_by_name", json={"meta": {"args": {"name": "author-1"}}})
     assert class_rpc.status_code == 200
     assert class_rpc.json()["meta"]["count"] >= 1
+
+    class_rpc_get = fastapi_client.get(
+        "/FastAuthors/lookup_by_name",
+        params={"name": "author-1", "fields[FastAuthor]": "name"},
+    )
+    assert class_rpc_get.status_code == 200
+    assert class_rpc_get.json()["meta"]["name"] == "author-1"
+
+    plain_rpc = fastapi_client.post("/FastAuthors/echo_plain", json={"message": "hello"})
+    assert plain_rpc.status_code == 200
+    assert plain_rpc.json() == {"message": "hello"}
 
     duplicate_rpc = fastapi_client.post("/FastAuthors/1/duplicate", json={})
     assert duplicate_rpc.status_code == 200
@@ -1590,12 +1675,22 @@ def test_fastapi_rpc_and_encoding_internal_branches(fastapi_client: TestClient) 
         ("static_method", True, ["GET"]),
     ]
 
-    parsed_args = api._parse_rpc_args(_request("x=query&y=2"), {"meta": {"args": {"x": "meta"}}})
+    parsed_args = api._parse_rpc_args(
+        _request_with_method("POST", "x=query&y=2"),
+        {"meta": {"args": {"x": "meta"}}},
+    )
     assert parsed_args["x"] == "meta"
-    assert parsed_args["y"] == "2"
+    assert "y" not in parsed_args
 
     parsed_null_payload_args = api._parse_rpc_args(_request("only=query"), None)
     assert parsed_null_payload_args == {"only": "query"}
+
+    parsed_plain_args = api._parse_rpc_args(
+        _request_with_method("POST", "message=query"),
+        {"message": "body"},
+        valid_jsonapi=False,
+    )
+    assert parsed_plain_args == {"message": "body"}
 
     assert api._encode_rpc_value(None) is None
     assert api._encode_rpc_value({"type": "FastThing", "id": "1"}) == {"type": "FastThing", "id": "1"}
@@ -1615,6 +1710,7 @@ def test_fastapi_rpc_and_encoding_internal_branches(fastapi_client: TestClient) 
     assert isinstance(encoded_list["data"], list)
     assert api._normalize_rpc_result(FastThing, None)["meta"] == {}
     assert api._normalize_rpc_result(FastThing, 7)["meta"]["result"] == 7
+    assert api._normalize_rpc_result(FastThing, {"raw": 1}, valid_jsonapi=False) == {"raw": 1}
 
 
 def test_fastapi_rpc_handler_exception_branches(fastapi_client: TestClient) -> None:
@@ -1643,20 +1739,20 @@ def test_fastapi_rpc_handler_exception_branches(fastapi_client: TestClient) -> N
 
             return Instance()
 
-    class_handler_jsonapi = api._rpc_handler(ClassRPCModel, "raise_jsonapi", True)
+    class_handler_jsonapi = api._rpc_handler(ClassRPCModel, "raise_jsonapi", True, "POST")
     with pytest.raises(JSONAPIHTTPError):
         class_handler_jsonapi(_request(""), None)
 
-    class_handler_runtime = api._rpc_handler(ClassRPCModel, "raise_runtime", True)
+    class_handler_runtime = api._rpc_handler(ClassRPCModel, "raise_runtime", True, "POST")
     with pytest.raises(JSONAPIHTTPError) as class_runtime_exc:
         class_handler_runtime(_request(""), None)
     assert class_runtime_exc.value.status_code == 500
 
-    instance_handler_jsonapi = api._rpc_handler(InstanceRPCModel, "raise_jsonapi", False)
+    instance_handler_jsonapi = api._rpc_handler(InstanceRPCModel, "raise_jsonapi", False, "POST")
     with pytest.raises(JSONAPIHTTPError):
         instance_handler_jsonapi("1", _request(""), None)
 
-    instance_handler_runtime = api._rpc_handler(InstanceRPCModel, "raise_runtime", False)
+    instance_handler_runtime = api._rpc_handler(InstanceRPCModel, "raise_runtime", False, "POST")
     with pytest.raises(JSONAPIHTTPError) as instance_runtime_exc:
         instance_handler_runtime("1", _request(""), None)
     assert instance_runtime_exc.value.status_code == 500
