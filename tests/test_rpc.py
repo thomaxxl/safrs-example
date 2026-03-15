@@ -63,6 +63,29 @@ def test_json_api_rpc_plain_json_mode_round_trip(client):
     assert res.get_json() == {"message": "hello"}
 
 
+def test_json_api_rpc_resource_scalar_and_none_contract(client, mock_thing):
+    resource_res = client.get("/thing/resource_by_name", query_string={"name": mock_thing.name})
+    assert resource_res.status_code == 200
+    resource_payload = resource_res.get_json()
+    assert resource_payload["data"]["type"] == "Thing"
+    assert resource_payload["data"]["id"] == mock_thing.id
+
+    scalar_res = client.get("/thing/scalar_echo", query_string={"value": "hello"})
+    assert scalar_res.status_code == 200
+    assert scalar_res.get_json()["meta"]["result"] == "hello"
+
+    none_res = client.get("/thing/return_none")
+    assert none_res.status_code == 200
+    assert none_res.get_json()["meta"] == {}
+
+
+def test_json_api_rpc_validation_error_returns_bad_request(client):
+    res = client.post("/thing/validate_name", json={"meta": {"args": {"name": ""}}})
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert payload["errors"][0]["detail"] == "Validation Error: name is required"
+
+
 def test_invalid_json_api_rpc_1(client, mock_thing):
     invalid_rcp_args = {"foo": "bar"}
 

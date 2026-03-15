@@ -280,3 +280,22 @@ def test_swagger_rpc_success_response_schema_is_present(client):
     by_canonical = {_canonical_path(path): ops for path, ops in paths.items()}
     my_rpc_post = by_canonical["/People/my_rpc"]["post"]
     assert "schema" in my_rpc_post["responses"]["200"]
+
+
+def test_swagger_rpc_contract_documents_query_and_raw_json_body(client):
+    spec = client.get("/swagger.json").get_json()
+    if spec.get("swagger") != "2.0":
+        pytest.skip("Swagger 2.0 contract checks apply to Flask swagger output only")
+
+    paths = spec["paths"]
+    by_canonical = {_canonical_path(path): ops for path, ops in paths.items()}
+
+    resource_get = by_canonical["/thing/resource_by_name"]["get"]
+    resource_query_params = {param["name"] for param in resource_get["parameters"] if param.get("in") == "query"}
+    assert "name" in resource_query_params
+    assert "varargs" not in resource_query_params
+
+    echo_plain_post = by_canonical["/People/echo_plain"]["post"]
+    echo_plain_schema = _body_schema(echo_plain_post, spec)
+    assert "meta" not in echo_plain_schema.get("properties", {})
+    assert echo_plain_schema["properties"]["message"]["example"] == "hello"

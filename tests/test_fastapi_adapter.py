@@ -89,6 +89,28 @@ class FastThing(SAFRSBase, Base):
     def prefix_name(self, prefix: str = "") -> dict[str, Any]:
         return {"meta": {"value": f"{prefix}{self.name}"}}
 
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def resource_by_name(cls, name: str = "") -> Any:
+        return cls.query.filter_by(name=name).one_or_none()
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def scalar_echo(cls, value: str = "") -> str:
+        return value
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def return_none(cls) -> None:
+        return None
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"])
+    def validate_name(cls, name: str = "") -> dict[str, str]:
+        if not name:
+            raise ValidationError("name is required")
+        return {"name": name}
+
 
 class FastClientIdThing(SAFRSBase, Base):
     __tablename__ = "FastClientIdThings"
@@ -1271,6 +1293,26 @@ def test_fastapi_rpc_routes_instance_class_and_duplicate(fastapi_client: TestCli
     payload = duplicate_rpc.json()
     assert payload["data"]["type"] == "FastAuthor"
     assert "id" in payload["data"]
+
+
+def test_fastapi_rpc_contract_shapes_and_validation(fastapi_client: TestClient) -> None:
+    resource_rpc = fastapi_client.get("/FastThings/resource_by_name", params={"name": "alpha"})
+    assert resource_rpc.status_code == 200
+    resource_payload = resource_rpc.json()
+    assert resource_payload["data"]["type"] == "FastThing"
+    assert resource_payload["data"]["attributes"]["name"] == "alpha"
+
+    scalar_rpc = fastapi_client.get("/FastThings/scalar_echo", params={"value": "hello"})
+    assert scalar_rpc.status_code == 200
+    assert scalar_rpc.json()["meta"]["result"] == "hello"
+
+    none_rpc = fastapi_client.get("/FastThings/return_none")
+    assert none_rpc.status_code == 200
+    assert none_rpc.json()["meta"] == {}
+
+    validation_rpc = fastapi_client.post("/FastThings/validate_name", json={"meta": {"args": {"name": ""}}})
+    assert validation_rpc.status_code == 400
+    assert validation_rpc.json()["errors"][0]["detail"] == "Validation Error: name is required"
 
 
 def test_fastapi_internal_helper_branches(monkeypatch: pytest.MonkeyPatch, fastapi_client: TestClient) -> None:

@@ -1,4 +1,4 @@
-from safrs import jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response, paginate
+from safrs import ValidationError, jsonapi_rpc, SAFRSFormattedResponse, jsonapi_format_response, paginate
 from safrs.api_methods import startswith, duplicate
 from sqlalchemy import func
 from app.base_model import db, BaseModel
@@ -75,6 +75,28 @@ class Thing(BaseModel):
     @jsonapi_rpc(http_methods=["POST", "GET"])
     def none(self):
         return {}
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def resource_by_name(cls, name=""):
+        return cls.query.filter_by(name=name).one_or_none()
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def scalar_echo(cls, value=""):
+        return value
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["GET", "POST"])
+    def return_none(cls):
+        return None
+
+    @classmethod
+    @jsonapi_rpc(http_methods=["POST"])
+    def validate_name(cls, name=""):
+        if not name:
+            raise ValidationError("name is required")
+        return {"name": name}
 
     @jsonapi_attr
     def some_attr(self):
